@@ -1,0 +1,3 @@
+Put uv.exe in this folder to build without installing Python (see README.md).
+Download: https://github.com/astral-sh/uv/releases  ->  uv-x86_64-pc-windows-msvc.zip
+Extract the zip and copy only uv.exe here.
