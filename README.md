@@ -1,77 +1,148 @@
-# CTD (CLI Text Database) v1.0
+# CTD — CLI Text Discovery
 
-TXTファイルをSQLiteに登録・管理・検索する個人向けCLIツール(Windows / `ctd.exe`)。
-仕様は「CTD v1.0 正式仕様書」+「Implementation Decisions Addendum」に従います。
+**Find the information you need from a large collection of local TXT files as quickly as possible.**
 
-## 使い方
+CTD is a fast, local, command-line full-text search tool for TXT files. Put your TXT files into a `txts/` folder, run a search command, and CTD finds the text across your whole collection almost instantly. It keeps its search index up to date automatically.
 
-```
-ctd init                          初期化(設定ファイル・フォルダ・DBを作成)
-ctd register <file>               TXTファイルを登録(対話式)
-ctd search <keyword>              検索(タイトル・本文・説明 / 日本語対応)
-ctd list                          一覧(新しい順、20件ずつ)
-ctd show <id>                     詳細表示
-ctd edit <id>                     編集(Enterで変更なし)
-ctd delete <id>                   削除(確認あり)
-ctd category list|add|rename      カテゴリ管理
-ctd backup                        DBバックアップ
-ctd help / ctd version
-```
+CTD is not a note-taking application or an editor. It never modifies or deletes your TXT files.
 
-- `<id>` はUUIDの先頭8文字以上でOK(一意に決まらない場合は候補を表示)。
-- editでは、説明・タグは `-` で削除/全解除、カテゴリは `0` で未設定にできます。
-- タグの区切りは `,` `，` `、` のどれでも使えます。
-- 終了コード: 0=正常(キャンセル含む) / 1=実行時エラー / 2=引数・使用方法エラー。
+> **v1.1 is a complete redesign in Rust.** The Python memo manager (v1.0) is kept as the Git tag `v1.0` and the branch `v1.0-python`. v1.1 does not use v1.0 data.
 
-## フォルダ構成
+## Features
 
-`ctd.exe` のあるフォルダが基準です。`ctd init` で次が作られます。
+- Literal, case-insensitive substring search (English, Japanese and any Unicode text), including file names and relative paths
+- SQLite FTS5 trigram index — fast on large collections
+- Automatic change detection at startup (new / modified / deleted files) with a single confirmation
+- Single standalone executable per OS — no Rust, Python or database server needed
+- Works fully offline; no background process
 
-```
-CTD/
-├── ctd.exe
-├── config/config.json     (database_path / backup_dir。相対パスは基準フォルダから)
-├── database/ctd.db
-├── backup/
-└── txt/
-```
+## Supported operating systems
 
-## ビルド・開発
+- Windows x86_64
+- Linux x86_64
 
-Pythonは「普通にインストール済み(3.11以上)」でも「未インストール」でも使えます。
-どちらの場合も、作業用の環境は **このフォルダ内の `.venv` / `.local`** だけに作られ、PCのPython環境や
-レジストリは変更しません(フォルダごと削除すれば全て消えます)。
+## Installation
 
-**Pythonを入れたくない場合(推奨)**
+Download the executable for your OS and put it anywhere (for example into a folder on your `PATH`):
 
-1. https://github.com/astral-sh/uv/releases から `uv-x86_64-pc-windows-msvc.zip` をダウンロードして展開し、
-   中の `uv.exe` だけを `tools\` フォルダにコピーします。
-2. `run_tests.bat`(テスト)→ `build_exe.bat`(`dist\ctd.exe` を作成)の順に実行します。
-   初回だけPython 3.12を自動でダウンロードします(インターネットが必要)。
+| OS | File |
+|---|---|
+| Windows | `ctd-v1.1.0-windows-x86_64.exe` (rename to `ctd.exe` if you like) |
+| Linux | `ctd-v1.1.0-linux-x86_64` (`chmod +x`, rename to `ctd`) |
 
-**Pythonがインストール済みの場合**: `tools\uv.exe` を置かずに、そのまま上の2つのバッチを実行します。
+The workspace is **not** tied to the executable's location.
 
-```
-run_tests.bat                     # テスト実行(pytest。一時DBのみ使用、実データには触れない)
-build_exe.bat                     # dist\ctd.exe を作成(PyInstaller)
-python ctd_entry.py <command>     # 開発時の実行(基準フォルダ = このプロジェクトのルート)
+## Quick start
+
+```text
+mkdir my-notes
+cd my-notes
+ctd init                 # creates txts/ and .ctd/
+# copy your .txt files into my-notes/txts/ (sub-folders are fine)
+ctd search sqlite
 ```
 
-完成した `dist\ctd.exe` は好きな場所にコピーして使えます。
+## Directory structure
 
-`assets\ctd.ico` があれば、`build_exe.bat` が自動で `ctd.exe` のアイコンとして使います(差し替えるときは同名の `.ico` で置き換えてください)。
-
-- `CTD_DEBUG=1` を設定すると、予期しないエラー時にスタックトレースも表示します。
-- 全文検索はFTS5のtrigramを使い、3文字未満の検索(と、trigramが使えない環境)は通常検索(LIKE)になります。
-
-## 構成
-
+```text
+my-notes/
+├── txts/              your original TXT files (never modified by CTD)
+│   ├── programming/rust.txt
+│   └── ideas/project.txt
+└── .ctd/
+    └── index.db       the search index (disposable, can be rebuilt)
 ```
-src/ctd/
-├── main.py            コマンドの振り分け・共通エラー処理
-├── app.py / config.py 実行コンテキスト・設定
-├── commands/          init register search list_notes show edit delete category backup
-├── database/          connection schema repository backup
-└── utils/             file_reader hash validator timeutil console
-tests/                 pytestによる自動テスト
+
+CTD finds the workspace by looking for `.ctd/` in the current directory and its parents, so commands work from any sub-folder.
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `ctd init` | Initialize a workspace in the current directory |
+| `ctd search <query>` | Search TXT files |
+| `ctd sync` | Detect changes and update the index |
+| `ctd sync --verify` | Re-hash every file (detects changes that keep size and timestamp) |
+| `ctd rebuild` | Rebuild the entire index |
+| `ctd status` | Show workspace and index status (does not scan) |
+| `ctd help` / `ctd version` | Help / version |
+
+Global options: `--yes` (update without asking), `--no-sync` (do not check for changes; takes precedence over `--yes`).
+
+### Search examples
+
+```text
+ctd search SQLite                      # case-insensitive substring
+ctd search "database performance"      # exact phrase (quote it)
+ctd search 全文検索                     # Japanese
+ctd search rust.txt                    # file name / path
+ctd search SQLite --limit 50           # show up to 50 files (default 20)
+ctd search SQLite --context 2          # 2 lines before/after each match
+ctd search SQLite --no-sync            # skip the change check
 ```
+
+The query is always a literal string — not a regular expression or a query language. Special characters (`*`, `"`, `-`, `'`, `%` …) are searched as typed. Each matching file appears once, with up to three matching lines. A file that matches only through its path shows `(path match)`.
+
+Search results go to standard output; progress and messages go to standard error, so `ctd search foo > result.txt` captures just the results.
+
+### Synchronization
+
+CTD has no background watcher. Before a search (and for `ctd sync`) it compares `txts/` with the index using file size and modification time. Only changed files are read and hashed (BLAKE3). If something changed you see a summary and one question:
+
+```text
+Changes detected:
+
+  New:       3
+  Modified:  2
+  Deleted:   1
+
+Update index? [Y/n]
+```
+
+- Enter or `Y` updates the index; `N` skips (the index may then be outdated); Ctrl+C cancels (exit code 130).
+- When standard input is not a terminal (pipes, scripts), CTD updates automatically. `--yes` always skips the question; `--no-sync` skips the check.
+- The whole update is one database transaction: on any error or Ctrl+C the previous index is preserved.
+- Files that are not valid UTF-8 (for example Shift_JIS) are reported on every run as `Warning: skipped …` and counted as *Skipped*. Their existing index entries are never replaced with partial content. Save such files as UTF-8 (UTF-8 with BOM is fine).
+- Files in directories CTD cannot read are never mistaken for deleted files.
+
+### Rebuild
+
+If the index is missing or damaged, CTD tells you and offers a safe rebuild. You can also run `ctd rebuild` yourself at any time. The new index is built in a temporary file inside `.ctd/` and swapped in only when complete; your TXT files are never touched. Deleting `.ctd/` is also safe — run `ctd init` and `ctd sync` again.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Success |
+| 1 | Runtime or operational error |
+| 2 | Invalid command or arguments |
+| 130 | Cancelled with Ctrl+C |
+
+## Building from source
+
+Requires Rust (stable, 1.75 or newer) and a C compiler (SQLite is compiled into the executable).
+
+```text
+cargo test --release
+cargo build --release          # target/release/ctd
+cargo run --release --example bench -- --sizes 1000,10000,100000
+```
+
+Helper scripts:
+
+- Linux: `scripts/build-linux.sh [build|test|bench]` → `dist/ctd-v1.1.0-linux-x86_64`
+- Windows: `scripts\build-windows.bat [build|test|bench]` → `dist\ctd-v1.1.0-windows-x86_64.exe`.
+  It downloads a portable Rust toolchain and MinGW-w64 into the project's `tools\` folder (no system-wide install; delete the folder to remove everything).
+
+Benchmark results measured on real hardware are in `bench/`.
+
+## Limitations
+
+- Only `.txt` files in UTF-8 (with or without BOM) are indexed. Other encodings are reported and skipped, never guessed.
+- Case-insensitive matching uses simple per-character Unicode case folding; accents are not ignored.
+- Queries shorter than three characters cannot use the trigram index and are slower on very large collections.
+- The index stores a copy of every file's text, so `.ctd/index.db` is several times the size of the TXT collection.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

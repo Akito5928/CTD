@@ -1,0 +1,58 @@
+name: build
+
+on:
+  push:
+    branches: [v1.1-rust]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      RUSTFLAGS: -C target-feature=+crt-static
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        run: cargo test --release --locked
+      - name: Build
+        run: cargo build --release --locked
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/release/ctd.exe dist/ctd-v1.1.0-windows-x86_64.exe
+          ./dist/ctd-v1.1.0-windows-x86_64.exe version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ctd-v1.1.0-windows-x86_64
+          path: dist/ctd-v1.1.0-windows-x86_64.exe
+      - name: Benchmark
+        continue-on-error: true
+        shell: pwsh
+        run: cargo run --release --locked --example bench -- --sizes 1000,10000,100000 | Out-File -Encoding utf8 bench/results-windows.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-results-windows
+          path: bench/results-windows.md
+          if-no-files-found: ignore
+
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        run: cargo test --release --locked
+      - name: Build
+        run: |
+          cargo build --release --locked
+          mkdir -p dist
+          cp target/release/ctd dist/ctd-v1.1.0-linux-x86_64
+          ./dist/ctd-v1.1.0-linux-x86_64 version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ctd-v1.1.0-linux-x86_64
+          path: dist/ctd-v1.1.0-linux-x86_64

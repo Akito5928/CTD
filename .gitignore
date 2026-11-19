@@ -1,19 +1,5 @@
-# 実行時に生成されるデータ(個人のメモが入るのでコミットしない)
-config/
-database/
-backup/
-txt/
-
-__pycache__/
-*.pyc
-.pytest_cache/
-build/
-dist/
-*.spec
-
-# ビルド用の環境(フォルダごと消せば全て消えます)
-.venv/
-.local/
-tools/uv.exe
-tools/uvx.exe
-tools/uvw.exe
+/target/
+/tools/
+/dist/
+/bench/work/
+*.tmp
