@@ -189,13 +189,17 @@ fn missing_and_invalid_database_are_recovered() {
     let (_d, ws) = setup();
     fs::remove_file(ws.db_path()).unwrap();
     assert_eq!(db::inspect(&ws.db_path()), IndexState::Missing);
-    let (_c, o) = sync::prepare(&ws, &SyncOptions::default(), &mut Fake::non_interactive()).unwrap();
+    // Take only the outcome so the returned connection is closed at once:
+    // Windows cannot replace a database file while another handle is open.
+    let o = sync::prepare(&ws, &SyncOptions::default(), &mut Fake::non_interactive()).unwrap().1;
     assert!(matches!(o, SyncOutcome::Rebuilt(_)));
     assert_eq!(count(&ws), 5);
 
     fs::write(ws.db_path(), b"this is not a database at all, just garbage text").unwrap();
     assert!(matches!(db::inspect(&ws.db_path()), IndexState::Invalid(_)));
-    let (_c, o) = sync::prepare(&ws, &SyncOptions::default(), &mut Fake::non_interactive()).unwrap();
+    // Take only the outcome so the returned connection is closed at once:
+    // Windows cannot replace a database file while another handle is open.
+    let o = sync::prepare(&ws, &SyncOptions::default(), &mut Fake::non_interactive()).unwrap().1;
     assert!(matches!(o, SyncOutcome::Rebuilt(_)));
     assert_eq!(count(&ws), 5);
     // TXT files untouched
