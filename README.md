@@ -1,147 +1,97 @@
-# CTD — CLI Text Discovery
+# CTD — fast local text search
 
-**Find the information you need from a large collection of local TXT files as quickly as possible.**
+**Put the executable next to your text files, type a word, find it.**
 
-CTD is a fast, local, command-line full-text search tool for TXT files. Put your TXT files into a `txts/` folder, run a search command, and CTD finds the text across your whole collection almost instantly. It keeps its search index up to date automatically.
+CTD searches every text file in the folder that contains the executable (and its sub-folders) and shows the matching files with the matching line. There is nothing to initialize or configure. It works fully offline and never changes your files.
 
-CTD is not a note-taking application or an editor. It never modifies or deletes your TXT files.
-
-> **v1.1 is a complete redesign in Rust.** The Python memo manager (v1.0) is kept as the Git tag `v1.0` and the branch `v1.0-python`. v1.1 does not use v1.0 data.
-
-## Features
-
-- Literal, case-insensitive substring search (English, Japanese and any Unicode text), including file names and relative paths
-- SQLite FTS5 trigram index — fast on large collections
-- Automatic change detection at startup (new / modified / deleted files) with a single confirmation
-- Single standalone executable per OS — no Rust, Python or database server needed
-- Works fully offline; no background process
-
-## Supported operating systems
-
-- Windows x86_64
-- Linux x86_64
-
-## Installation
-
-Download the executable for your OS and put it anywhere (for example into a folder on your `PATH`):
-
-| OS | File |
-|---|---|
-| Windows | `ctd-v1.1.0-windows-x86_64.exe` (rename to `ctd.exe` if you like) |
-| Linux | `ctd-v1.1.0-linux-x86_64` (`chmod +x`, rename to `ctd`) |
-
-The workspace is **not** tied to the executable's location.
+> v1.2 is a redesign of v1.1 (which used a `txts/` workspace and SQLite). v1.1 is kept as the tag `v1.1` and the branch `v1.1-rust`; the Python memo manager v1.0 as the tag `v1.0` and branch `v1.0-python`.
 
 ## Quick start
 
-```text
-mkdir my-notes
-cd my-notes
-ctd init                 # creates txts/ and .ctd/
-# copy your .txt files into my-notes/txts/ (sub-folders are fine)
-ctd search sqlite
-```
-
-## Directory structure
+1. Download the executable for your OS from the [Releases](../../releases) page (`ctd-v1.2.0-windows-x86_64.exe` or `ctd-v1.2.0-linux-x86_64`).
+2. Put it into the folder whose text you want to search (rename it to `ctd` / `ctd.exe` if you like).
+3. Open a terminal in any folder and run it by its path, or put that folder on your `PATH`:
 
 ```text
-my-notes/
-├── txts/              your original TXT files (never modified by CTD)
-│   ├── programming/rust.txt
-│   └── ideas/project.txt
-└── .ctd/
-    └── index.db       the search index (disposable, can be rebuilt)
+ctd hello
+ctd programming language          # both words must match (AND)
+ctd -s programming                # no directory depth limit
 ```
 
-CTD finds the workspace by looking for `.ctd/` in the current directory and its parents, so commands work from any sub-folder.
+The **search root is the folder that contains the executable** — not the current directory. If you move the executable, the new folder becomes the search root (and gets its own index).
 
 ## Commands
 
 | Command | Description |
 |---|---|
-| `ctd init` | Initialize a workspace in the current directory |
-| `ctd search <query>` | Search TXT files |
-| `ctd sync` | Detect changes and update the index |
-| `ctd sync --verify` | Re-hash every file (detects changes that keep size and timestamp) |
-| `ctd rebuild` | Rebuild the entire index |
-| `ctd status` | Show workspace and index status (does not scan) |
-| `ctd help` / `ctd version` | Help / version |
+| `ctd <terms>` | Search (several terms are combined with AND) |
+| `ctd -s <terms>` | Search without the 8-level depth limit |
+| `ctd status` | Show search root, cache location and index information (no scanning) |
+| `ctd rebuild` | Discard the index and scan everything again |
+| `ctd help` / `ctd --help` | Help |
+| `ctd version` / `ctd --version` | Version |
 
-Global options: `--yes` (update without asking), `--no-sync` (do not check for changes; takes precedence over `--yes`).
+`status`, `rebuild`, `help` and `version` are commands only when they are the **only** argument. `ctd status report` searches for both words; to search for the word itself use `ctd -- status`.
 
-### Search examples
+## Search rules
 
-```text
-ctd search SQLite                      # case-insensitive substring
-ctd search "database performance"      # exact phrase (quote it)
-ctd search 全文検索                     # Japanese
-ctd search rust.txt                    # file name / path
-ctd search SQLite --limit 50           # show up to 50 files (default 20)
-ctd search SQLite --context 2          # 2 lines before/after each match
-ctd search SQLite --no-sync            # skip the change check
-```
+- Literal, case-insensitive substring search (English, Japanese, full-width characters, any Unicode text). No regular expressions, no fuzzy search.
+- Terms are split at whitespace, including the full-width space. Quotes do not make a phrase.
+- Every term must occur in the file's relative path **or** its text (different terms may match in different places).
+- Results are sorted by relative path. At most 20 files are shown; the rest is counted (`... and N more files.`).
+- Each file is shown once with a representative line (the line containing the most distinct terms, otherwise the first one), `(+N more lines)` when there are more, or `(path match)` when only the path matched.
 
-The query is always a literal string — not a regular expression or a query language. Special characters (`*`, `"`, `-`, `'`, `%` …) are searched as typed. Each matching file appears once, with up to three matching lines. A file that matches only through its path shows `(path match)`.
+Output: **results go to standard output**; the banner, root, progress, counts and warnings go to standard error, so `ctd foo > result.txt` captures just the results.
 
-Search results go to standard output; progress and messages go to standard error, so `ctd search foo > result.txt` captures just the results.
+## Which files are searched
 
-### Synchronization
+- Any file that can be read as text, whatever its extension (or none).
+- Binary files (a NUL byte in the first 8 KB) are skipped silently.
+- UTF-8 and UTF-8 with BOM are supported. Other encodings (Shift_JIS, UTF-16, …) are skipped with a warning the first time they are read — save such files as UTF-8.
+- Sub-folders up to **8 levels** below the root are searched (files in the root are level 0). `-s` removes this limit only.
+- Never searched, even with `-s`: symbolic links and junctions (not followed), and system areas — Windows: `%SystemRoot%`, `%ProgramFiles%`, `%ProgramFiles(x86)%`, `%ProgramData%`, `$Recycle.Bin`, `System Volume Information`; Linux: `/proc`, `/sys`, `/dev`, `/run`. Hidden folders such as `.git` are **not** excluded.
+- CTD refuses to run when its folder is a filesystem root (`C:\`, `/`) or inside a system area.
 
-CTD has no background watcher. Before a search (and for `ctd sync`) it compares `txts/` with the index using file size and modification time. Only changed files are read and hashed (BLAKE3). If something changed you see a summary and one question:
+Be careful where you put the executable: everything readable below it (up to 8 levels) is indexed on the first search.
 
-```text
-Changes detected:
+## The index
 
-  New:       3
-  Modified:  2
-  Deleted:   1
+- Stored in the OS user cache directory, **never** in the searched folder: `%LOCALAPPDATA%\ctd\v1\<id>\` on Windows, `$XDG_CACHE_HOME/ctd/v1/<id>/` (or `~/.cache/ctd/v1/<id>/`) on Linux. `ctd status` shows the exact path.
+- Built automatically on the first search and updated incrementally at the start of every search: new files are added, changed files (size / timestamp, confirmed with a BLAKE3 hash) are re-read, deleted files are removed, unchanged files are reused.
+- Files that cannot be read are skipped with a warning and never mistaken for deleted ones; an incomplete scan never removes anything.
+- Updates are written to temporary files and committed atomically. If a run is interrupted (Ctrl+C, crash, power loss) the previous index stays valid; a damaged index is detected and rebuilt automatically.
+- Old caches of folders you no longer use are not deleted automatically — remove the `ctd` folder in the cache directory to reclaim the space.
 
-Update index? [Y/n]
-```
-
-- Enter or `Y` updates the index; `N` skips (the index may then be outdated); Ctrl+C cancels (exit code 130).
-- When standard input is not a terminal (pipes, scripts), CTD updates automatically. `--yes` always skips the question; `--no-sync` skips the check.
-- The whole update is one database transaction: on any error or Ctrl+C the previous index is preserved.
-- Files that are not valid UTF-8 (for example Shift_JIS) are reported on every run as `Warning: skipped …` and counted as *Skipped*. Their existing index entries are never replaced with partial content. Save such files as UTF-8 (UTF-8 with BOM is fine).
-- Files in directories CTD cannot read are never mistaken for deleted files.
-
-### Rebuild
-
-If the index is missing or damaged, CTD tells you and offers a safe rebuild. You can also run `ctd rebuild` yourself at any time. The new index is built in a temporary file inside `.ctd/` and swapped in only when complete; your TXT files are never touched. Deleting `.ctd/` is also safe — run `ctd init` and `ctd sync` again.
-
-### Exit codes
+## Exit codes
 
 | Code | Meaning |
 |---|---|
-| 0 | Success |
-| 1 | Runtime or operational error |
-| 2 | Invalid command or arguments |
+| 0 | Success (also when nothing matched) |
+| 1 | Runtime error |
+| 2 | Invalid arguments (including no arguments or an empty search) |
 | 130 | Cancelled with Ctrl+C |
 
 ## Building from source
 
-Requires Rust (stable, 1.75 or newer) and a C compiler (SQLite is compiled into the executable).
+Requires Rust (stable, 1.75 or newer). No C compiler or database is needed.
 
 ```text
 cargo test --release
-cargo build --release          # target/release/ctd
+cargo build --release          # target/release/ctd (ctd.exe on Windows)
 cargo run --release --example bench -- --sizes 1000,10000,100000
 ```
 
-Helper scripts:
-
-- Linux: `scripts/build-linux.sh [build|test|bench]` → `dist/ctd-v1.1.0-linux-x86_64`
-- Windows: `scripts\build-windows.bat [build|test|bench]` → `dist\ctd-v1.1.0-windows-x86_64.exe`.
-  It downloads a portable Rust toolchain and MinGW-w64 into the project's `tools\` folder (no system-wide install; delete the folder to remove everything).
+- Linux: `scripts/build-linux.sh [build|test|bench]` → `dist/ctd-v1.2.0-linux-x86_64`
+- CI: `.github/workflows/build.yml` builds and tests Windows and Linux on every push; pushing a tag such as `v1.2` publishes a GitHub Release with both executables and SHA-256 checksums.
 
 Benchmark results measured on real hardware are in `bench/`.
 
 ## Limitations
 
-- Only `.txt` files in UTF-8 (with or without BOM) are indexed. Other encodings are reported and skipped, never guessed.
-- Case-insensitive matching uses simple per-character Unicode case folding; accents are not ignored.
-- Queries shorter than three characters cannot use the trigram index and are slower on very large collections.
-- The index stores a copy of every file's text, so `.ctd/index.db` is several times the size of the TXT collection.
+- Case-insensitive matching uses simple per-character Unicode case folding; accents and full-width/half-width forms are different characters.
+- The index keeps a (case-folded) copy of every text file, so the cache is about as large as the text itself.
+- Showing the representative line re-reads the original file; for files of several hundred MB with tens of millions of lines this takes a few seconds.
+- Two `ctd` processes updating the same index at the same moment may disturb each other; the next run recovers automatically.
 
 ## License
 

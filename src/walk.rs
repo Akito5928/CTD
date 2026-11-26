@@ -1,5 +1,6 @@
-//! Recursive TXT scanning and stable file reading.
+//! Directory walking: depth limit, system exclusions, no link following.
 
+use crate::config::Excludes;
 use crate::interrupt;
 use anyhow::{bail, Context, Result};
 use std::collections::HashSet;
@@ -7,27 +8,32 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+/// Standard depth limit (directory levels below the search root).
+pub const DEFAULT_MAX_DEPTH: u16 = 8;
+
 #[derive(Debug, Clone)]
-pub struct ScannedFile {
-    /// Path relative to `txts/`, using `/` as separator.
+pub struct FileEntry {
+    /// Path relative to the root, `/` separated.
     pub rel: String,
     pub abs: PathBuf,
+    /// Depth of the directory containing the file (root = 0).
+    pub depth: u16,
     pub size: u64,
     pub mtime_ns: i64,
 }
 
 #[derive(Debug, Default)]
-pub struct ScanResult {
-    pub files: Vec<ScannedFile>,
-    /// Directories (relative, `""` = root) whose contents could not be fully listed.
+pub struct WalkResult {
+    pub files: Vec<FileEntry>,
+    /// Directories (relative, `""` = root) that could not be listed completely.
     pub failed_dirs: Vec<String>,
-    /// TXT files that were listed but whose metadata could not be read.
+    /// Files whose metadata could not be read.
     pub failed_files: HashSet<String>,
     pub warnings: Vec<String>,
 }
 
-impl ScanResult {
-    /// True when `rel` may exist but was not seen because of a scan problem.
+impl WalkResult {
+    /// True when `rel` may exist but was not seen because of a walk problem.
     pub fn is_uncertain(&self, rel: &str) -> bool {
         if self.failed_files.contains(rel) {
             return true;
@@ -48,26 +54,18 @@ pub fn mtime_ns(meta: &fs::Metadata) -> i64 {
     }
 }
 
-fn is_txt_name(name: &str) -> bool {
-    name.to_ascii_lowercase().ends_with(".txt")
-}
-
-/// Scan `txts` recursively. Symbolic links are never followed.
-pub fn scan(txts: &Path) -> Result<ScanResult> {
-    let root_meta = fs::symlink_metadata(txts).with_context(|| {
-        format!(
-            "cannot access {} (run `ctd init` to recreate it)",
-            txts.display()
-        )
-    })?;
-    if !root_meta.is_dir() {
-        bail!("{} is not a directory", txts.display());
+/// Walk `root`. `max_depth = None` means unlimited. Symbolic links and
+/// junctions are never followed; non-regular files are ignored.
+pub fn walk(root: &Path, max_depth: Option<u16>, ex: &Excludes) -> Result<WalkResult> {
+    let meta = fs::symlink_metadata(root)
+        .with_context(|| format!("cannot access the search root {}", root.display()))?;
+    if !meta.is_dir() {
+        bail!("{} is not a directory", root.display());
     }
+    let mut res = WalkResult::default();
+    let mut stack: Vec<(PathBuf, String, u16)> = vec![(root.to_path_buf(), String::new(), 0)];
 
-    let mut res = ScanResult::default();
-    let mut stack: Vec<(PathBuf, String)> = vec![(txts.to_path_buf(), String::new())];
-
-    while let Some((dir, rel_dir)) = stack.pop() {
+    while let Some((dir, rel_dir, depth)) = stack.pop() {
         interrupt::check()?;
         let rd = match fs::read_dir(&dir) {
             Ok(r) => r,
@@ -75,8 +73,7 @@ pub fn scan(txts: &Path) -> Result<ScanResult> {
                 if rel_dir.is_empty() {
                     return Err(e).with_context(|| format!("cannot read {}", dir.display()));
                 }
-                res.warnings
-                    .push(format!("cannot read directory {rel_dir}: {e}"));
+                res.warnings.push(format!("cannot read directory {rel_dir}: {e}"));
                 res.failed_dirs.push(rel_dir);
                 continue;
             }
@@ -87,7 +84,7 @@ pub fn scan(txts: &Path) -> Result<ScanResult> {
                 Err(e) => {
                     res.warnings.push(format!(
                         "error while listing {}: {e}",
-                        if rel_dir.is_empty() { "txts" } else { &rel_dir }
+                        if rel_dir.is_empty() { "the search root" } else { &rel_dir }
                     ));
                     res.failed_dirs.push(rel_dir.clone());
                     continue;
@@ -109,23 +106,29 @@ pub fn scan(txts: &Path) -> Result<ScanResult> {
             let ft = match entry.file_type() {
                 Ok(t) => t,
                 Err(e) => {
-                    if is_txt_name(name) {
-                        res.failed_files.insert(rel.clone());
-                    }
                     res.warnings.push(format!("{rel}: {e}"));
+                    res.failed_files.insert(rel);
                     continue;
                 }
             };
             if ft.is_symlink() {
                 continue;
             }
+            let abs = entry.path();
             if ft.is_dir() {
-                stack.push((entry.path(), rel));
-            } else if ft.is_file() && is_txt_name(name) {
+                if ex.is_excluded_name(name) || ex.is_excluded_path(&abs) {
+                    continue;
+                }
+                let child_depth = depth + 1;
+                if max_depth.map_or(true, |m| child_depth <= m) {
+                    stack.push((abs, rel, child_depth));
+                }
+            } else if ft.is_file() {
                 match entry.metadata() {
-                    Ok(m) => res.files.push(ScannedFile {
+                    Ok(m) => res.files.push(FileEntry {
                         rel,
-                        abs: entry.path(),
+                        abs,
+                        depth,
                         size: m.len(),
                         mtime_ns: mtime_ns(&m),
                     }),
@@ -139,34 +142,4 @@ pub fn scan(txts: &Path) -> Result<ScanResult> {
     }
     res.files.sort_by(|a, b| a.rel.cmp(&b.rel));
     Ok(res)
-}
-
-pub struct FileData {
-    pub bytes: Vec<u8>,
-    pub size: i64,
-    pub mtime_ns: i64,
-}
-
-/// Read a file, verifying that it did not change while being read.
-/// Retries once; never returns partially read content.
-pub fn read_stable(path: &Path) -> std::result::Result<FileData, String> {
-    for _ in 0..2 {
-        let m1 = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
-        if m1.file_type().is_symlink() {
-            return Err("is a symbolic link".to_string());
-        }
-        let bytes = fs::read(path).map_err(|e| e.to_string())?;
-        let m2 = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
-        if m1.len() == m2.len()
-            && mtime_ns(&m1) == mtime_ns(&m2)
-            && bytes.len() as u64 == m2.len()
-        {
-            return Ok(FileData {
-                bytes,
-                size: m2.len() as i64,
-                mtime_ns: mtime_ns(&m2),
-            });
-        }
-    }
-    Err("file changed while it was being read".to_string())
 }

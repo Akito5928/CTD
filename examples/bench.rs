@@ -63,8 +63,7 @@ fn gen_file(rng: &mut Rng, i: usize, bytes: &mut Vec<u8>) {
 }
 
 fn file_path(root: &Path, i: usize) -> PathBuf {
-    root.join("txts")
-        .join(format!("dir{:03}", i % 200))
+    root.join(format!("dir{:03}", i % 200))
         .join(format!("sub{}", (i / 200) % 10))
         .join(format!("file_{i:06}.txt"))
 }
@@ -97,6 +96,8 @@ fn run(bin: &Path, cwd: &Path, args: &[&str]) -> f64 {
     let st = Command::new(bin)
         .args(args)
         .current_dir(cwd)
+        .env("XDG_CACHE_HOME", cwd.join("..").join("cache"))
+        .env("LOCALAPPDATA", cwd.join("..").join("cache"))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -156,27 +157,30 @@ fn drop_caches() -> bool {
     fs::write("/proc/sys/vm/drop_caches", "3").is_ok()
 }
 
-fn bench_size(bin: &Path, base: &Path, n: usize) {
-    let root = base.join(format!("ws{n}"));
-    let _ = fs::remove_dir_all(&root);
+fn bench_size(src_bin: &Path, base: &Path, n: usize) {
+    let root = base.join(format!("ws{n}")).join("root");
+    let _ = fs::remove_dir_all(base.join(format!("ws{n}")));
     fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(base.join(format!("ws{n}")).join("cache")).unwrap();
+    let bin = root.join(src_bin.file_name().unwrap());
+    fs::copy(src_bin, &bin).unwrap();
     eprintln!("[{n}] generating dataset...");
     let t = Instant::now();
     let bytes = generate(&root, n);
     eprintln!("[{n}] generated in {:.1}s", t.elapsed().as_secs_f64());
-    run(bin, &root, &["init"]);
 
     let batch = (n / 100).clamp(10, 1000);
-    let t_first = run(bin, &root, &["--yes", "sync"]);
-    let db_bytes = fs::metadata(root.join(".ctd/index.db")).unwrap().len();
-    eprintln!("[{n}] first sync done");
-    let t_rebuild = run(bin, &root, &["rebuild"]);
+    let cache = base.join(format!("ws{n}")).join("cache");
+    let t_first = run(&bin, &root, &["rarequery7731"]);
+    let cache_bytes = dir_size(&cache);
+    eprintln!("[{n}] first search (index build) done");
+    let t_rebuild = run(&bin, &root, &["rebuild"]);
     eprintln!("[{n}] rebuild done");
 
     let cold_ok = drop_caches();
-    let t_cold = run(bin, &root, &["sync"]);
-    let t_uptodate = median(bin, &root, &["sync"], 5);
-    let t_verify = run(bin, &root, &["sync", "--verify"]);
+    let t_cold = run(&bin, &root, &["rarequery7731"]);
+    let t_uptodate = median(&bin, &root, &["rarequery7731"], 5);
+    let t_status = median(&bin, &root, &["status"], 5);
 
     // new files
     let mut rng = Rng(42);
@@ -187,53 +191,56 @@ fn bench_size(bin: &Path, base: &Path, n: usize) {
         fs::create_dir_all(p.parent().unwrap()).unwrap();
         fs::write(&p, &buf).unwrap();
     }
-    let t_new = run(bin, &root, &["--yes", "sync"]);
+    let t_new = run(&bin, &root, &["rarequery7731"]);
     // modified files
     for k in 0..batch {
         gen_file(&mut rng, k * 7 % n, &mut buf);
         buf.extend_from_slice(b"modified\n");
         fs::write(file_path(&root, k * 7 % n), &buf).unwrap();
     }
-    let t_mod = run(bin, &root, &["--yes", "sync"]);
+    let t_mod = run(&bin, &root, &["rarequery7731"]);
     // deleted files
     for k in 0..batch {
         let _ = fs::remove_file(file_path(&root, n + k));
     }
-    let t_del = run(bin, &root, &["--yes", "sync"]);
+    let t_del = run(&bin, &root, &["rarequery7731"]);
 
-    let queries = [
-        ("rare English word (~0.1% of files)", "rarequery7731"),
-        ("common English word", "database"),
-        ("Japanese word", "全文検索"),
-        ("phrase with spaces", "database index"),
-        ("path (file name)", "file_000042"),
-        ("2 characters (no trigram)", "検索"),
-        ("1 character (no trigram)", "z"),
+    let queries: [(&str, Vec<&str>); 8] = [
+        ("rare English word (~0.1% of files)", vec!["rarequery7731"]),
+        ("common English word", vec!["database"]),
+        ("Japanese word", vec!["全文検索"]),
+        ("two terms (AND), both common", vec!["database", "index"]),
+        ("three terms (AND)", vec!["database", "index", "全文検索"]),
+        ("path (file name)", vec!["file_000042"]),
+        ("1 character", vec!["z"]),
+        ("unlimited depth (-s), rare word", vec!["-s", "rarequery7731"]),
     ];
     let mut qrows = String::new();
-    for (label, q) in queries {
-        let t = median(bin, &root, &["--no-sync", "search", q], 5);
-        qrows += &format!("| {label} | `{q}` | {} |\n", ms(t));
+    for (label, q) in queries.iter() {
+        let t = median(&bin, &root, q, 5);
+        qrows += &format!("| {label} | `{}` | {} |\n", q.join(" "), ms(t));
     }
-    let t_search_sync = median(bin, &root, &["search", "database"], 5);
 
     println!("\n### {n} files\n");
-    println!("Dataset: {n} files, {:.1} MB of text; index database: {:.1} MB\n", bytes as f64 / 1e6, db_bytes as f64 / 1e6);
-    println!("| Measurement | Time |\n|---|---|");
-    println!("| Full indexing (first `sync` on empty index) | {} |", ms(t_first));
-    println!("| Full indexing (`rebuild`) | {} |", ms(t_rebuild));
     println!(
-        "| First start on up-to-date index ({}) | {} |",
+        "Dataset: {n} files, {:.1} MB of text; index (cache directory): {:.1} MB\n",
+        bytes as f64 / 1e6,
+        cache_bytes as f64 / 1e6
+    );
+    println!("| Measurement | Time |\n|---|---|");
+    println!("| First search on a new root (builds the full index) | {} |", ms(t_first));
+    println!("| `rebuild` | {} |", ms(t_rebuild));
+    println!(
+        "| First search on an up-to-date index ({}) | {} |",
         if cold_ok { "OS cache dropped" } else { "OS cache NOT dropped" },
         ms(t_cold)
     );
-    println!("| Start with up-to-date index (`sync`, median of 5) | {} |", ms(t_uptodate));
-    println!("| `sync --verify` (hash all files) | {} |", ms(t_verify));
-    println!("| Incremental: {batch} new files | {} |", ms(t_new));
+    println!("| Search on an up-to-date index, rare word (median of 5) | {} |", ms(t_uptodate));
+    println!("| `status` (no scan, median of 5) | {} |", ms(t_status));
+    println!("| Incremental: {batch} new files (search incl. update) | {} |", ms(t_new));
     println!("| Incremental: {batch} modified files | {} |", ms(t_mod));
     println!("| Incremental: {batch} deleted files | {} |", ms(t_del));
-    println!("| `search database` incl. startup check (median of 5) | {} |", ms(t_search_sync));
-    println!("\nSearch time with `--no-sync` (process start included, median of 5):\n");
+    println!("\nSearch time on an up-to-date index (process start and change check included, median of 5):\n");
     println!("| Query type | Query | Time |\n|---|---|---|");
     print!("{qrows}");
 }
@@ -266,5 +273,4 @@ fn main() {
             let _ = fs::remove_dir_all(base.join(format!("ws{n}")));
         }
     }
-    let _ = dir_size(&base);
 }

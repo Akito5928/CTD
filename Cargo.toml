@@ -1,9 +1,9 @@
 [package]
 name = "ctd"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 rust-version = "1.75"
-description = "CTD - fast local full-text search for TXT files"
+description = "CTD - fast local text search"
 license = "MIT"
 readme = "README.md"
 publish = false
@@ -22,8 +22,7 @@ anyhow = "1"
 blake3 = "1"
 clap = { version = "4", features = ["derive"] }
 ctrlc = "3"
-rusqlite = { version = "0.32", features = ["bundled"] }
-thiserror = "1"
+memchr = "2"
 
 [dev-dependencies]
 tempfile = "3"

@@ -1,16 +1,16 @@
-//! CTD - fast local full-text search for TXT files.
+//! CTD - fast local text search.
 
 pub mod cli;
-pub mod db;
+pub mod config;
 pub mod error;
 pub mod interrupt;
 pub mod output;
-pub mod scan;
 pub mod search;
 pub mod status;
-pub mod sync;
+pub mod store;
 pub mod textio;
-pub mod workspace;
+pub mod update;
+pub mod walk;
 
 /// Application version (matches the release version).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

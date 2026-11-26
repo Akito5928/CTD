@@ -2,7 +2,8 @@ name: build
 
 on:
   push:
-    branches: [v1.1-rust]
+    branches: [main, v1.2-dev]
+    tags: ["v*"]
   workflow_dispatch:
 
 env:
@@ -23,22 +24,21 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item target/release/ctd.exe dist/ctd-v1.1.0-windows-x86_64.exe
-          ./dist/ctd-v1.1.0-windows-x86_64.exe version
+          Copy-Item target/release/ctd.exe dist/ctd-v1.2.0-windows-x86_64.exe
+          ./dist/ctd-v1.2.0-windows-x86_64.exe version
       - uses: actions/upload-artifact@v4
         with:
-          name: ctd-v1.1.0-windows-x86_64
-          path: dist/ctd-v1.1.0-windows-x86_64.exe
-      - name: Benchmark
-        continue-on-error: true
+          name: ctd-v1.2.0-windows-x86_64
+          path: dist/ctd-v1.2.0-windows-x86_64.exe
+      - name: Benchmark (manual runs only)
+        if: github.event_name == 'workflow_dispatch'
         shell: pwsh
         run: cargo run --release --locked --example bench -- --sizes 1000,10000,100000 | Out-File -Encoding utf8 bench/results-windows.md
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: github.event_name == 'workflow_dispatch'
         with:
           name: bench-results-windows
           path: bench/results-windows.md
-          if-no-files-found: ignore
 
   linux:
     runs-on: ubuntu-22.04
@@ -50,9 +50,29 @@ jobs:
         run: |
           cargo build --release --locked
           mkdir -p dist
-          cp target/release/ctd dist/ctd-v1.1.0-linux-x86_64
-          ./dist/ctd-v1.1.0-linux-x86_64 version
+          cp target/release/ctd dist/ctd-v1.2.0-linux-x86_64
+          ./dist/ctd-v1.2.0-linux-x86_64 version
       - uses: actions/upload-artifact@v4
         with:
-          name: ctd-v1.1.0-linux-x86_64
-          path: dist/ctd-v1.1.0-linux-x86_64
+          name: ctd-v1.2.0-linux-x86_64
+          path: dist/ctd-v1.2.0-linux-x86_64
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, linux]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ctd-*
+          merge-multiple: true
+          path: dist
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+          gh release create "$GITHUB_REF_NAME" * --repo "$GITHUB_REPOSITORY" --title "CTD $GITHUB_REF_NAME" --generate-notes

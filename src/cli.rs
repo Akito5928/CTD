@@ -1,90 +1,113 @@
 //! Command line interface and dispatch.
 
-use crate::error::{EXIT_ERROR, EXIT_INTERRUPTED, EXIT_OK};
-use crate::search::{self, SearchOptions};
-use crate::sync::{self, SyncOptions, SyncOutcome, TerminalPrompter};
-use crate::workspace::{self, Workspace};
+use crate::config::{Config, Excludes};
+use crate::error::{CtdError, EXIT_ERROR, EXIT_INTERRUPTED, EXIT_OK, EXIT_USAGE};
+use crate::search::{self, MAX_FILES};
+use crate::store::State;
+use crate::update::{self, UpdateOptions, UpdateStats};
+use crate::walk::DEFAULT_MAX_DEPTH;
 use crate::{interrupt, output, status, VERSION};
-use anyhow::{Context, Result};
-use clap::{CommandFactory, Parser, Subcommand};
+use anyhow::Result;
+use clap::{CommandFactory, Parser};
 use std::io::{self, BufWriter, Write};
 
 #[derive(Parser, Debug)]
 #[command(
     name = "ctd",
-    about = "CTD - fast local full-text search for TXT files",
+    about = "CTD - fast local text search. Searches the folder that contains this executable.",
+    override_usage = "ctd [-s] <search terms>...\n       ctd status | rebuild | help | version",
+    after_help = "Several terms are combined with AND; matching ignores case.\n\
+                  Use `ctd -- status` to search for the word \"status\" itself.",
     disable_version_flag = true,
-    arg_required_else_help = true
+    disable_help_subcommand = true
 )]
 struct Cli {
-    /// Update the index without asking for confirmation
-    #[arg(long, global = true)]
-    yes: bool,
-
-    /// Skip the startup synchronization check and use the existing index
-    #[arg(long = "no-sync", global = true)]
-    no_sync: bool,
+    /// Search without the directory depth limit (default: 8 levels)
+    #[arg(short = 's')]
+    unlimited: bool,
 
     /// Print version
-    #[arg(short = 'V', long = "version", global = true)]
+    #[arg(short = 'V', long = "version")]
     version: bool,
 
-    #[command(subcommand)]
-    command: Option<Command>,
-}
-
-#[derive(Subcommand, Debug)]
-enum Command {
-    /// Initialize a workspace in the current directory
-    Init,
-    /// Search TXT files (literal, case-insensitive substring)
-    Search {
-        /// Text to search for (a phrase with spaces must be quoted)
-        #[arg(allow_hyphen_values = true, value_parser = non_empty)]
-        query: String,
-        /// Maximum number of files to show
-        #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..))]
-        limit: u32,
-        /// Lines of context before and after each match
-        #[arg(long, default_value_t = 0)]
-        context: u32,
-    },
-    /// Detect TXT changes and update the index
-    Sync {
-        /// Hash every file to detect changes that keep size and timestamp
-        #[arg(long)]
-        verify: bool,
-    },
-    /// Rebuild the entire search index
-    Rebuild,
-    /// Show workspace and index status
-    Status,
-    /// Show version
-    Version,
-}
-
-fn non_empty(s: &str) -> std::result::Result<String, String> {
-    if s.is_empty() {
-        Err("the search query must not be empty".to_string())
-    } else {
-        Ok(s.to_string())
-    }
+    /// Search terms (all must match, in the path or the text)
+    #[arg(value_name = "TERM")]
+    terms: Vec<String>,
 }
 
 pub fn main_entry() -> i32 {
     output::init_console();
-    let cli = Cli::parse(); // exits with code 2 on usage errors, 0 for --help
+    let raw: Vec<String> = std::env::args_os().skip(1).map(|a| a.to_string_lossy().into_owned()).collect();
+
+    if raw.is_empty() {
+        eprintln!("{}", Cli::command().render_help());
+        return EXIT_USAGE;
+    }
     interrupt::install();
-    match execute(cli) {
+    let result = if raw.len() == 1 {
+        match raw[0].as_str() {
+            "status" => cmd_status(),
+            "rebuild" => cmd_rebuild(),
+            "version" => {
+                println!("CTD v{VERSION}");
+                Ok(())
+            }
+            "help" => {
+                println!("{}", Cli::command().render_help());
+                Ok(())
+            }
+            _ => run_cli(),
+        }
+    } else {
+        run_cli()
+    };
+    match result {
         Ok(()) => EXIT_OK,
         Err(e) => report_error(&e),
     }
 }
 
+fn run_cli() -> Result<()> {
+    let cli = Cli::parse(); // exits with code 2 on usage errors, 0 for --help
+    if cli.version {
+        println!("CTD v{VERSION}");
+        return Ok(());
+    }
+    let terms = search::parse_terms(&cli.terms)?;
+    let cfg = Config::from_environment()?;
+    let ex = Excludes::system();
+    let stdout = io::stdout();
+    let mut out = BufWriter::new(stdout.lock());
+    do_search(&cfg, &ex, &terms, cli.unlimited, &mut out)?;
+    out.flush()?;
+    Ok(())
+}
+
+fn cmd_status() -> Result<()> {
+    let cfg = Config::from_environment()?;
+    let stdout = io::stdout();
+    let mut out = BufWriter::new(stdout.lock());
+    status::run(&cfg, &mut out)?;
+    out.flush()?;
+    Ok(())
+}
+
+fn cmd_rebuild() -> Result<()> {
+    let cfg = Config::from_environment()?;
+    do_rebuild(&cfg, &Excludes::system())
+}
+
 fn report_error(e: &anyhow::Error) -> i32 {
-    if sync::is_interrupted_error(e) {
-        eprintln!("\nInterrupted. No changes were committed.");
-        return EXIT_INTERRUPTED;
+    match e.downcast_ref::<CtdError>() {
+        Some(CtdError::Interrupted) => {
+            eprintln!("\nInterrupted. The previous index was kept.");
+            return EXIT_INTERRUPTED;
+        }
+        Some(CtdError::Usage(m)) => {
+            eprintln!("Error: {m}");
+            return EXIT_USAGE;
+        }
+        None => {}
     }
     for cause in e.chain() {
         if let Some(io_err) = cause.downcast_ref::<io::Error>() {
@@ -97,88 +120,70 @@ fn report_error(e: &anyhow::Error) -> i32 {
     EXIT_ERROR
 }
 
-fn execute(cli: Cli) -> Result<()> {
-    if cli.version {
-        println!("CTD v{VERSION}");
+fn report_update(stats: &UpdateStats) {
+    if let Some(n) = &stats.notice {
+        eprintln!("{n}");
+    }
+    if stats.changed() {
+        eprintln!(
+            "Index updated: {} new, {} modified, {} removed.",
+            stats.added, stats.modified, stats.removed
+        );
+    }
+}
+
+/// Search (after bringing the index up to date). Results go to `out`;
+/// messages go to standard error.
+pub fn do_search<W: Write>(
+    cfg: &Config,
+    ex: &Excludes,
+    terms: &[String],
+    unlimited: bool,
+    out: &mut W,
+) -> Result<()> {
+    ex.check_root(&cfg.root)?;
+    eprintln!("CTD v{VERSION}\n");
+    eprintln!("Searching: \"{}\"", terms.join(" "));
+    eprintln!("Root: {}", output::display_root(&cfg.root));
+    let max_depth = if unlimited { None } else { Some(DEFAULT_MAX_DEPTH) };
+    if unlimited {
+        eprintln!("Searching with unlimited directory depth...");
+    }
+    eprintln!();
+
+    let (idx, stats) = update::update(cfg, ex, &UpdateOptions { max_depth, rebuild: false })?;
+    report_update(&stats);
+
+    let found = search::find(&cfg.root, &cfg.cache_dir, &idx, terms, max_depth, MAX_FILES)?;
+    if found.total == 0 {
+        writeln!(out, "No matching files found.")?;
         return Ok(());
     }
-    let Some(command) = cli.command else {
-        let _ = Cli::command().print_help();
-        std::process::exit(crate::error::EXIT_USAGE);
-    };
-    let opts = SyncOptions {
-        verify: false,
-        yes: cli.yes,
-        no_sync: cli.no_sync,
-    };
-    let stdout = io::stdout();
-    let mut out = BufWriter::new(stdout.lock());
-
-    match command {
-        Command::Version => writeln!(out, "CTD v{VERSION}")?,
-        Command::Init => {
-            let cwd = std::env::current_dir().context("cannot determine the current directory")?;
-            let (ws, outcome) = workspace::init(&cwd)?;
-            if outcome.created {
-                writeln!(out, "Initialized CTD workspace:\n  {}", ws.root.display())?;
-                writeln!(out, "\nPut your TXT files into txts/ and run `ctd search <query>`.")?;
-            } else {
-                writeln!(out, "CTD workspace is already initialized:\n  {}", ws.root.display())?;
-            }
-        }
-        Command::Status => {
-            let ws = Workspace::find()?;
-            status::run(&ws, &mut out)?;
-        }
-        Command::Rebuild => {
-            let ws = Workspace::find()?;
-            let stats = sync::rebuild(&ws)?;
-            eprintln!("\nIndex rebuilt successfully.\n");
-            eprintln!("  Indexed: {}", stats.added);
-            if stats.skipped > 0 {
-                eprintln!("  Skipped: {}", stats.skipped);
-            }
-        }
-        Command::Sync { verify } => {
-            let ws = Workspace::find()?;
-            let opts = SyncOptions { verify, ..opts };
-            if opts.no_sync {
-                eprintln!("Synchronization skipped (--no-sync).");
-                return Ok(());
-            }
-            let _ = sync::prepare(&ws, &opts, &mut TerminalPrompter)?;
-        }
-        Command::Search {
-            query,
-            limit,
-            context,
-        } => {
-            let ws = Workspace::find()?;
-            let (conn, outcome) = sync::prepare(&ws, &opts, &mut TerminalPrompter)?;
-            eprintln!("Searching...");
-            let sopts = SearchOptions {
-                limit: limit as usize,
-                context: context as usize,
-            };
-            let res = search::search(&conn, &query, &sopts)?;
-            if res.hits.is_empty() {
-                writeln!(out, "No results found for \"{query}\".")?;
-            } else {
-                output::print_results(&mut out, &res, sopts.context)?;
-                out.flush()?;
-                let n = res.hits.len();
-                let noun = if n == 1 { "file" } else { "files" };
-                if res.more {
-                    eprintln!("{n} {noun} shown (more files match; use --limit to show more).");
-                } else {
-                    eprintln!("{n} {noun} matched.");
-                }
-            }
-            if outcome == SyncOutcome::Declined {
-                eprintln!("Note: the index update was skipped, so results may be outdated.");
-            }
-        }
+    let noun = if found.total == 1 { "file" } else { "files" };
+    eprintln!("Found {} {noun}.\n", found.total);
+    for (i, hit) in found.hits.iter().enumerate() {
+        interrupt::check()?;
+        let d = search::describe(&hit.abs, terms);
+        output::print_hit(out, i + 1, &hit.rel, &d)?;
     }
-    out.flush()?;
+    if found.total > found.hits.len() {
+        eprintln!("... and {} more files.", found.total - found.hits.len());
+    }
+    Ok(())
+}
+
+/// Discard the stored index and scan the search root again.
+pub fn do_rebuild(cfg: &Config, ex: &Excludes) -> Result<()> {
+    ex.check_root(&cfg.root)?;
+    eprintln!("CTD v{VERSION}\n");
+    eprintln!("Root: {}", output::display_root(&cfg.root));
+    eprintln!("Rebuilding the index...\n");
+    let (idx, stats) = update::update(
+        cfg,
+        ex,
+        &UpdateOptions { max_depth: Some(DEFAULT_MAX_DEPTH), rebuild: true },
+    )?;
+    let text = idx.entries.iter().filter(|e| e.state == State::Text).count();
+    eprintln!("Index rebuilt: {} files scanned, {text} indexed.", stats.scanned);
     Ok(())
 }

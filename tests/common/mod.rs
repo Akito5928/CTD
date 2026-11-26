@@ -1,80 +1,94 @@
 #![allow(dead_code)]
-use ctd::sync::{Answer, Prompter};
-use ctd::workspace::{self, Workspace};
+use ctd::config::{Config, Excludes};
+use ctd::search;
+use ctd::update::{self, UpdateOptions, UpdateStats};
+use ctd::walk::DEFAULT_MAX_DEPTH;
 use std::fs;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 use tempfile::TempDir;
 
-pub fn new_ws() -> (TempDir, Workspace) {
-    let dir = tempfile::tempdir().unwrap();
-    let (ws, _) = workspace::init(dir.path()).unwrap();
-    (dir, ws)
+pub struct Env {
+    pub root_dir: TempDir,
+    pub cache_dir: TempDir,
+    pub cfg: Config,
+    pub ex: Excludes,
 }
 
-pub fn write(ws: &Workspace, rel: &str, bytes: &[u8]) {
-    let p = ws.txts_dir().join(rel);
-    fs::create_dir_all(p.parent().unwrap()).unwrap();
-    fs::write(p, bytes).unwrap();
-}
-
-pub fn set_mtime(ws: &Workspace, rel: &str, secs_after_epoch: u64) {
-    let f = fs::OpenOptions::new()
-        .write(true)
-        .open(ws.txts_dir().join(rel))
-        .unwrap();
-    f.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(secs_after_epoch))
-        .unwrap();
-}
-
-pub struct Fake {
-    pub interactive: bool,
-    pub answers: Vec<Answer>,
-    pub asked: usize,
-}
-
-impl Fake {
-    pub fn non_interactive() -> Self {
-        Fake { interactive: false, answers: vec![], asked: 0 }
+impl Env {
+    pub fn new() -> Env {
+        let root_dir = tempfile::tempdir().unwrap();
+        let cache_dir = tempfile::tempdir().unwrap();
+        let cfg = Config {
+            root: root_dir.path().to_path_buf(),
+            cache_dir: cache_dir.path().join("idx"),
+        };
+        Env { root_dir, cache_dir, cfg, ex: Excludes::new(&[], &[], cfg!(windows)) }
     }
-    pub fn interactive(answers: Vec<Answer>) -> Self {
-        Fake { interactive: true, answers, asked: 0 }
-    }
-}
 
-impl Prompter for Fake {
-    fn interactive(&self) -> bool {
-        self.interactive
+    pub fn path(&self, rel: &str) -> std::path::PathBuf {
+        self.cfg.root.join(rel)
     }
-    fn ask_yes_no(&mut self, _q: &str) -> anyhow::Result<Answer> {
-        self.asked += 1;
-        Ok(self.answers.remove(0))
+
+    pub fn write(&self, rel: &str, bytes: &[u8]) {
+        let p = self.path(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, bytes).unwrap();
     }
-}
 
-pub fn count(ws: &Workspace) -> i64 {
-    let c = ctd::db::open(&ws.db_path()).unwrap();
-    ctd::db::count_files(&c).unwrap()
-}
+    pub fn set_mtime(&self, rel: &str, secs: u64) {
+        let f = fs::OpenOptions::new().write(true).open(self.path(rel)).unwrap();
+        f.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(secs)).unwrap();
+    }
 
-pub fn content_of(ws: &Workspace, rel: &str) -> Option<String> {
-    let c = ctd::db::open(&ws.db_path()).unwrap();
-    c.query_row("SELECT content FROM files WHERE relative_path=?1", [rel], |r| r.get(0))
-        .ok()
+    pub fn update(&self, depth: Option<u16>) -> UpdateStats {
+        update::update(&self.cfg, &self.ex, &UpdateOptions { max_depth: depth, rebuild: false }).unwrap().1
+    }
+
+    pub fn rebuild(&self) -> UpdateStats {
+        update::update(
+            &self.cfg,
+            &self.ex,
+            &UpdateOptions { max_depth: Some(DEFAULT_MAX_DEPTH), rebuild: true },
+        )
+        .unwrap()
+        .1
+    }
+
+    /// Update (like a real search) and return all matching relative paths.
+    pub fn search(&self, terms: &[&str]) -> Vec<String> {
+        self.search_depth(terms, Some(DEFAULT_MAX_DEPTH))
+    }
+
+    pub fn search_all(&self, terms: &[&str]) -> Vec<String> {
+        self.search_depth(terms, None)
+    }
+
+    fn search_depth(&self, terms: &[&str], depth: Option<u16>) -> Vec<String> {
+        let (idx, _) =
+            update::update(&self.cfg, &self.ex, &UpdateOptions { max_depth: depth, rebuild: false }).unwrap();
+        let t: Vec<String> = terms.iter().map(|s| s.to_string()).collect();
+        search::find(&self.cfg.root, &self.cfg.cache_dir, &idx, &t, depth, usize::MAX)
+            .unwrap()
+            .hits
+            .into_iter()
+            .map(|h| h.rel)
+            .collect()
+    }
+
+    pub fn snapshot_root(&self) -> Vec<(String, Vec<u8>)> {
+        tree_snapshot(&self.cfg.root)
+    }
 }
 
 pub fn tree_snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
     fn walk(d: &Path, base: &Path, out: &mut Vec<(String, Vec<u8>)>) {
         for e in fs::read_dir(d).unwrap() {
-            let e = e.unwrap();
-            let p = e.path();
+            let p = e.unwrap().path();
             if p.is_dir() {
                 walk(&p, base, out);
             } else {
-                out.push((
-                    p.strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/"),
-                    fs::read(&p).unwrap(),
-                ));
+                out.push((p.strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/"), fs::read(&p).unwrap()));
             }
         }
     }

@@ -1,90 +1,90 @@
 ## CTD benchmark
 
-Hardware: CPU: Intel(R) Xeon(R) Processor @ 2.30GHz; logical CPUs: 1; RAM:        4088100 kB; OS: linux
+Hardware: CPU: Intel(R) Xeon(R) Processor @ 2.30GHz; logical CPUs: 1; RAM:        4088088 kB; OS: linux
 
-Binary: /home/claude/ctd-rs/target/release/ctd
+Binary: /home/claude/ctd12/target/release/ctd
 
 
 ### 1000 files
 
-Dataset: 1000 files, 3.6 MB of text; index database: 14.3 MB
+Dataset: 1000 files, 3.6 MB of text; index (cache directory): 3.7 MB
 
 | Measurement | Time |
 |---|---|
-| Full indexing (first `sync` on empty index) | 468.6 ms |
-| Full indexing (`rebuild`) | 500.5 ms |
-| First start on up-to-date index (OS cache dropped) | 43.6 ms |
-| Start with up-to-date index (`sync`, median of 5) | 7.6 ms |
-| `sync --verify` (hash all files) | 13.2 ms |
-| Incremental: 10 new files | 16.2 ms |
-| Incremental: 10 modified files | 27.9 ms |
-| Incremental: 10 deleted files | 17.2 ms |
-| `search database` incl. startup check (median of 5) | 9.8 ms |
+| First search on a new root (builds the full index) | 42.0 ms |
+| `rebuild` | 41.4 ms |
+| First search on an up-to-date index (OS cache dropped) | 12.1 ms |
+| Search on an up-to-date index, rare word (median of 5) | 6.2 ms |
+| `status` (no scan, median of 5) | 1.1 ms |
+| Incremental: 10 new files (search incl. update) | 8.1 ms |
+| Incremental: 10 modified files | 8.5 ms |
+| Incremental: 10 deleted files | 8.9 ms |
 
-Search time with `--no-sync` (process start included, median of 5):
+Search time on an up-to-date index (process start and change check included, median of 5):
 
 | Query type | Query | Time |
 |---|---|---|
-| rare English word (~0.1% of files) | `rarequery7731` | 2.6 ms |
-| common English word | `database` | 6.2 ms |
-| Japanese word | `全文検索` | 4.7 ms |
-| phrase with spaces | `database index` | 4.4 ms |
-| path (file name) | `file_000042` | 2.2 ms |
-| 2 characters (no trigram) | `検索` | 2.1 ms |
-| 1 character (no trigram) | `z` | 21.7 ms |
+| rare English word (~0.1% of files) | `rarequery7731` | 6.2 ms |
+| common English word | `database` | 6.6 ms |
+| Japanese word | `全文検索` | 6.6 ms |
+| two terms (AND), both common | `database index` | 8.0 ms |
+| three terms (AND) | `database index 全文検索` | 6.6 ms |
+| path (file name) | `file_000042` | 6.4 ms |
+| 1 character | `z` | 6.0 ms |
+| unlimited depth (-s), rare word | `-s rarequery7731` | 6.3 ms |
 
 ### 10000 files
 
-Dataset: 10000 files, 35.7 MB of text; index database: 128.0 MB
+Dataset: 10000 files, 35.7 MB of text; index (cache directory): 36.7 MB
 
 | Measurement | Time |
 |---|---|
-| Full indexing (first `sync` on empty index) | 5.17 s |
-| Full indexing (`rebuild`) | 5.30 s |
-| First start on up-to-date index (OS cache dropped) | 359.7 ms |
-| Start with up-to-date index (`sync`, median of 5) | 51.7 ms |
-| `sync --verify` (hash all files) | 112.5 ms |
-| Incremental: 100 new files | 126.5 ms |
-| Incremental: 100 modified files | 131.9 ms |
-| Incremental: 100 deleted files | 111.4 ms |
-| `search database` incl. startup check (median of 5) | 79.4 ms |
+| First search on a new root (builds the full index) | 350.8 ms |
+| `rebuild` | 359.2 ms |
+| First search on an up-to-date index (OS cache dropped) | 52.9 ms |
+| Search on an up-to-date index, rare word (median of 5) | 34.5 ms |
+| `status` (no scan, median of 5) | 2.3 ms |
+| Incremental: 100 new files (search incl. update) | 43.3 ms |
+| Incremental: 100 modified files | 43.8 ms |
+| Incremental: 100 deleted files | 39.7 ms |
 
-Search time with `--no-sync` (process start included, median of 5):
+Search time on an up-to-date index (process start and change check included, median of 5):
 
 | Query type | Query | Time |
 |---|---|---|
-| rare English word (~0.1% of files) | `rarequery7731` | 3.6 ms |
-| common English word | `database` | 43.6 ms |
-| Japanese word | `全文検索` | 35.1 ms |
-| phrase with spaces | `database index` | 19.5 ms |
-| path (file name) | `file_000042` | 3.4 ms |
-| 2 characters (no trigram) | `検索` | 2.2 ms |
-| 1 character (no trigram) | `z` | 193.2 ms |
+| rare English word (~0.1% of files) | `rarequery7731` | 37.2 ms |
+| common English word | `database` | 35.6 ms |
+| Japanese word | `全文検索` | 35.3 ms |
+| two terms (AND), both common | `database index` | 35.3 ms |
+| three terms (AND) | `database index 全文検索` | 36.0 ms |
+| path (file name) | `file_000042` | 37.0 ms |
+| 1 character | `z` | 36.1 ms |
+| unlimited depth (-s), rare word | `-s rarequery7731` | 35.4 ms |
 
 ### 100000 files
 
-Dataset: 100000 files, 357.0 MB of text; index database: 1275.3 MB
+Dataset: 100000 files, 357.0 MB of text; index (cache directory): 367.2 MB
 
 | Measurement | Time |
 |---|---|
-| Full indexing (first `sync` on empty index) | 60.28 s |
-| Full indexing (`rebuild`) | 60.22 s |
-| First start on up-to-date index (OS cache dropped) | 2.99 s |
-| Start with up-to-date index (`sync`, median of 5) | 386.1 ms |
-| `sync --verify` (hash all files) | 3.94 s |
-| Incremental: 1000 new files | 1.04 s |
-| Incremental: 1000 modified files | 1.40 s |
-| Incremental: 1000 deleted files | 1.09 s |
-| `search database` incl. startup check (median of 5) | 736.2 ms |
+| First search on a new root (builds the full index) | 3.70 s |
+| `rebuild` | 3.43 s |
+| First search on an up-to-date index (OS cache dropped) | 734.1 ms |
+| Search on an up-to-date index, rare word (median of 5) | 313.4 ms |
+| `status` (no scan, median of 5) | 17.0 ms |
+| Incremental: 1000 new files (search incl. update) | 381.7 ms |
+| Incremental: 1000 modified files | 380.6 ms |
+| Incremental: 1000 deleted files | 345.6 ms |
 
-Search time with `--no-sync` (process start included, median of 5):
+Search time on an up-to-date index (process start and change check included, median of 5):
 
 | Query type | Query | Time |
 |---|---|---|
-| rare English word (~0.1% of files) | `rarequery7731` | 8.3 ms |
-| common English word | `database` | 376.5 ms |
-| Japanese word | `全文検索` | 260.8 ms |
-| phrase with spaces | `database index` | 166.4 ms |
-| path (file name) | `file_000042` | 10.5 ms |
-| 2 characters (no trigram) | `検索` | 3.0 ms |
-| 1 character (no trigram) | `z` | 1.91 s |
+| rare English word (~0.1% of files) | `rarequery7731` | 319.6 ms |
+| common English word | `database` | 326.7 ms |
+| Japanese word | `全文検索` | 417.8 ms |
+| two terms (AND), both common | `database index` | 405.9 ms |
+| three terms (AND) | `database index 全文検索` | 380.9 ms |
+| path (file name) | `file_000042` | 375.2 ms |
+| 1 character | `z` | 366.8 ms |
+| unlimited depth (-s), rare word | `-s rarequery7731` | 384.9 ms |

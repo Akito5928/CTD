@@ -3,7 +3,7 @@
 # Usage: scripts/build-linux.sh [test|build|bench]   (default: build)
 set -eu
 cd "$(dirname "$0")/.."
-VERSION=1.1.0
+VERSION=1.2.0
 MODE="${1:-build}"
 
 case "$MODE" in
