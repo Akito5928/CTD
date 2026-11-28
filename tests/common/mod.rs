@@ -23,7 +23,12 @@ impl Env {
             root: root_dir.path().to_path_buf(),
             cache_dir: cache_dir.path().join("idx"),
         };
-        Env { root_dir, cache_dir, cfg, ex: Excludes::new(&[], &[], cfg!(windows)) }
+        Env {
+            root_dir,
+            cache_dir,
+            cfg,
+            ex: Excludes::new(&[], &[], cfg!(windows)),
+        }
     }
 
     pub fn path(&self, rel: &str) -> std::path::PathBuf {
@@ -37,19 +42,35 @@ impl Env {
     }
 
     pub fn set_mtime(&self, rel: &str, secs: u64) {
-        let f = fs::OpenOptions::new().write(true).open(self.path(rel)).unwrap();
-        f.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(secs)).unwrap();
+        let f = fs::OpenOptions::new()
+            .write(true)
+            .open(self.path(rel))
+            .unwrap();
+        f.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(secs))
+            .unwrap();
     }
 
     pub fn update(&self, depth: Option<u16>) -> UpdateStats {
-        update::update(&self.cfg, &self.ex, &UpdateOptions { max_depth: depth, rebuild: false }).unwrap().1
+        update::update(
+            &self.cfg,
+            &self.ex,
+            &UpdateOptions {
+                max_depth: depth,
+                rebuild: false,
+            },
+        )
+        .unwrap()
+        .1
     }
 
     pub fn rebuild(&self) -> UpdateStats {
         update::update(
             &self.cfg,
             &self.ex,
-            &UpdateOptions { max_depth: Some(DEFAULT_MAX_DEPTH), rebuild: true },
+            &UpdateOptions {
+                max_depth: Some(DEFAULT_MAX_DEPTH),
+                rebuild: true,
+            },
         )
         .unwrap()
         .1
@@ -65,15 +86,29 @@ impl Env {
     }
 
     fn search_depth(&self, terms: &[&str], depth: Option<u16>) -> Vec<String> {
-        let (idx, _) =
-            update::update(&self.cfg, &self.ex, &UpdateOptions { max_depth: depth, rebuild: false }).unwrap();
+        let (idx, _) = update::update(
+            &self.cfg,
+            &self.ex,
+            &UpdateOptions {
+                max_depth: depth,
+                rebuild: false,
+            },
+        )
+        .unwrap();
         let t: Vec<String> = terms.iter().map(|s| s.to_string()).collect();
-        search::find(&self.cfg.root, &self.cfg.cache_dir, &idx, &t, depth, usize::MAX)
-            .unwrap()
-            .hits
-            .into_iter()
-            .map(|h| h.rel)
-            .collect()
+        search::find(
+            &self.cfg.root,
+            &self.cfg.cache_dir,
+            &idx,
+            &t,
+            depth,
+            usize::MAX,
+        )
+        .unwrap()
+        .hits
+        .into_iter()
+        .map(|h| h.rel)
+        .collect()
     }
 
     pub fn snapshot_root(&self) -> Vec<(String, Vec<u8>)> {
@@ -88,7 +123,13 @@ pub fn tree_snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
             if p.is_dir() {
                 walk(&p, base, out);
             } else {
-                out.push((p.strip_prefix(base).unwrap().to_string_lossy().replace('\\', "/"), fs::read(&p).unwrap()));
+                out.push((
+                    p.strip_prefix(base)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/"),
+                    fs::read(&p).unwrap(),
+                ));
             }
         }
     }

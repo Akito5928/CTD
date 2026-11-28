@@ -30,8 +30,14 @@ fn multiple_terms_are_anded() {
     e.write("one.txt", b"programming only");
     e.write("two.txt", b"language only");
     e.write("sep.txt", b"programming here\nlanguage there");
-    assert_eq!(e.search(&["programming", "language"]), s(&["both.txt", "sep.txt"]));
-    assert_eq!(e.search(&["language", "programming"]), s(&["both.txt", "sep.txt"])); // order independent
+    assert_eq!(
+        e.search(&["programming", "language"]),
+        s(&["both.txt", "sep.txt"])
+    );
+    assert_eq!(
+        e.search(&["language", "programming"]),
+        s(&["both.txt", "sep.txt"])
+    ); // order independent
     assert_eq!(e.search(&["programming"]).len(), 3);
 }
 
@@ -142,7 +148,10 @@ fn large_file_is_streamed() {
     data.extend_from_slice(b"the UNIQUE-marker-xyz at the end\n");
     e.write("big.txt", &data);
     assert_eq!(e.search(&["unique-marker-xyz"]), s(&["big.txt"]));
-    assert_eq!(e.search(&["line number 399999", "unique-marker"]), s(&["big.txt"]));
+    assert_eq!(
+        e.search(&["line number 399999", "unique-marker"]),
+        s(&["big.txt"])
+    );
     assert!(e.search(&["line number 400000"]).is_empty());
 }
 

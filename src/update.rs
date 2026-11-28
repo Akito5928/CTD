@@ -61,8 +61,19 @@ impl UpdateStats {
 }
 
 pub enum Ingested {
-    Text { hash: [u8; 32], off: u64, len: u64, size: u64, mtime_ns: i64 },
-    Skipped { state: State, size: u64, mtime_ns: i64, reason: Option<String> },
+    Text {
+        hash: [u8; 32],
+        off: u64,
+        len: u64,
+        size: u64,
+        mtime_ns: i64,
+    },
+    Skipped {
+        state: State,
+        size: u64,
+        mtime_ns: i64,
+        reason: Option<String>,
+    },
 }
 
 pub enum IngestError {
@@ -125,7 +136,12 @@ fn ingest_once(path: &Path, seg: &mut SegmentWriter) -> Result<Option<Ingested>,
         }));
     }
     if head.contains(&0) {
-        return Ok(Some(Ingested::Skipped { state: State::Binary, size: size1, mtime_ns: mt1, reason: None }));
+        return Ok(Some(Ingested::Skipped {
+            state: State::Binary,
+            size: size1,
+            mtime_ns: mt1,
+            reason: None,
+        }));
     }
 
     let mark = seg.pos();
@@ -133,10 +149,16 @@ fn ingest_once(path: &Path, seg: &mut SegmentWriter) -> Result<Option<Ingested>,
     let mut norm = Normalizer::new();
     let mut out: Vec<u8> = Vec::with_capacity(CHUNK + 16);
     let mut total = head.len() as u64;
-    let not_utf8 = |seg: &mut SegmentWriter, reason: String| -> Result<Option<Ingested>, IngestError> {
-        seg.rewind(mark).map_err(IngestError::Fatal)?;
-        Ok(Some(Ingested::Skipped { state: State::NotUtf8, size: size1, mtime_ns: mt1, reason: Some(reason) }))
-    };
+    let not_utf8 =
+        |seg: &mut SegmentWriter, reason: String| -> Result<Option<Ingested>, IngestError> {
+            seg.rewind(mark).map_err(IngestError::Fatal)?;
+            Ok(Some(Ingested::Skipped {
+                state: State::NotUtf8,
+                size: size1,
+                mtime_ns: mt1,
+                reason: Some(reason),
+            }))
+        };
 
     hasher.update(&head);
     if let Err(e) = norm.feed(&head, &mut out) {
@@ -211,7 +233,8 @@ pub fn update(cfg: &Config, ex: &Excludes, opts: &UpdateOptions) -> Result<(Inde
     let old = match Index::load(&cfg.cache_dir) {
         LoadResult::Ready(i) if i.root == root_str => i,
         LoadResult::Ready(_) => {
-            stats.notice = Some("The stored index belongs to another location and is being rebuilt.".into());
+            stats.notice =
+                Some("The stored index belongs to another location and is being rebuilt.".into());
             stats.first_run = true;
             Index::new(&root_str)
         }
@@ -220,7 +243,9 @@ pub fn update(cfg: &Config, ex: &Excludes, opts: &UpdateOptions) -> Result<(Inde
             Index::new(&root_str)
         }
         LoadResult::Corrupt(reason) => {
-            stats.notice = Some(format!("The index was damaged ({reason}) and is being rebuilt."));
+            stats.notice = Some(format!(
+                "The index was damaged ({reason}) and is being rebuilt."
+            ));
             stats.first_run = true;
             Index::new(&root_str)
         }
@@ -235,7 +260,11 @@ pub fn update(cfg: &Config, ex: &Excludes, opts: &UpdateOptions) -> Result<(Inde
 
     // ---- plan -------------------------------------------------------
     let old_map: HashMap<&str, usize> = if reuse {
-        old.entries.iter().enumerate().map(|(i, e)| (e.rel.as_str(), i)).collect()
+        old.entries
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (e.rel.as_str(), i))
+            .collect()
     } else {
         HashMap::new()
     };
@@ -243,7 +272,9 @@ pub fn update(cfg: &Config, ex: &Excludes, opts: &UpdateOptions) -> Result<(Inde
     let mut to_ingest = 0usize;
     for f in &w.files {
         let a = match old_map.get(f.rel.as_str()) {
-            Some(&oi) if old.entries[oi].size == f.size && old.entries[oi].mtime_ns == f.mtime_ns => {
+            Some(&oi)
+                if old.entries[oi].size == f.size && old.entries[oi].mtime_ns == f.mtime_ns =>
+            {
                 stats.unchanged += 1;
                 Action::Keep(oi)
             }
@@ -258,7 +289,11 @@ pub fn update(cfg: &Config, ex: &Excludes, opts: &UpdateOptions) -> Result<(Inde
     // ---- execute ----------------------------------------------------
     let mut dirty = stats.first_run || opts.rebuild;
     let mut new_entries: Vec<Entry> = Vec::with_capacity(w.files.len());
-    let mut seg = if to_ingest > 0 { Some(SegmentWriter::create(&cfg.cache_dir)?) } else { None };
+    let mut seg = if to_ingest > 0 {
+        Some(SegmentWriter::create(&cfg.cache_dir)?)
+    } else {
+        None
+    };
     if to_ingest >= PROGRESS_MIN_FILES {
         eprintln!("Indexing {to_ingest} files...");
     }
@@ -286,14 +321,22 @@ pub fn update(cfg: &Config, ex: &Excludes, opts: &UpdateOptions) -> Result<(Inde
         if to_ingest >= PROGRESS_MIN_FILES && done % PROGRESS_EVERY == 0 {
             eprintln!("  {done}/{to_ingest} files");
         }
-        let s = seg.as_mut().expect("segment exists when files must be read");
+        let s = seg
+            .as_mut()
+            .expect("segment exists when files must be read");
         let keep_old = |new_entries: &mut Vec<Entry>| {
             if let Some(oi) = oi {
                 new_entries.push(old.entries[oi].clone());
             }
         };
         match ingest(&f.abs, s) {
-            Ok(Ingested::Text { hash, off, len, size, mtime_ns }) => {
+            Ok(Ingested::Text {
+                hash,
+                off,
+                len,
+                size,
+                mtime_ns,
+            }) => {
                 dirty = true;
                 if let Some(oi) = oi {
                     let o = &old.entries[oi];
@@ -323,7 +366,12 @@ pub fn update(cfg: &Config, ex: &Excludes, opts: &UpdateOptions) -> Result<(Inde
                     len,
                 });
             }
-            Ok(Ingested::Skipped { state, size, mtime_ns, reason }) => {
+            Ok(Ingested::Skipped {
+                state,
+                size,
+                mtime_ns,
+                reason,
+            }) => {
                 dirty = true;
                 if let Some(r) = reason {
                     eprintln!("Warning: skipped {}: {r}", f.rel);
@@ -422,13 +470,24 @@ pub fn update(cfg: &Config, ex: &Excludes, opts: &UpdateOptions) -> Result<(Inde
             }
         }
     }
-    let mut idx = Index { root: root_str, updated_unix: store::unix_now(), segments, entries: new_entries };
+    let mut idx = Index {
+        root: root_str,
+        updated_unix: store::unix_now(),
+        segments,
+        entries: new_entries,
+    };
 
     // Compaction: merge segments when many exist or most of the data is dead.
     let total: u64 = idx.segments.iter().map(|s| s.len).sum();
-    let live: u64 = idx.entries.iter().filter(|e| e.state == State::Text).map(|e| e.len).sum();
+    let live: u64 = idx
+        .entries
+        .iter()
+        .filter(|e| e.state == State::Text)
+        .map(|e| e.len)
+        .sum();
     let mut intermediate: Vec<String> = Vec::new();
-    if idx.segments.len() > COMPACT_MAX_SEGMENTS || (total > COMPACT_MIN_BYTES && live * 2 < total) {
+    if idx.segments.len() > COMPACT_MAX_SEGMENTS || (total > COMPACT_MIN_BYTES && live * 2 < total)
+    {
         compact(cfg, &mut idx)?;
         intermediate = new_seg.iter().map(|s| s.name.clone()).collect();
     }
@@ -448,7 +507,11 @@ pub fn update(cfg: &Config, ex: &Excludes, opts: &UpdateOptions) -> Result<(Inde
         .filter(|s| !live_names.contains(s.name.as_str()))
         .map(|s| s.name.clone())
         .collect();
-    dropped.extend(intermediate.into_iter().filter(|n| !live_names.contains(n.as_str())));
+    dropped.extend(
+        intermediate
+            .into_iter()
+            .filter(|n| !live_names.contains(n.as_str())),
+    );
     store::cleanup(&cfg.cache_dir, &idx, &dropped);
     Ok((idx, stats))
 }
@@ -468,13 +531,15 @@ fn compact(cfg: &Config, idx: &mut Index) -> Result<()> {
         let name = &idx.segments[e.seg as usize].name;
         let f = match files.entry(e.seg) {
             std::collections::hash_map::Entry::Occupied(o) => o.into_mut(),
-            std::collections::hash_map::Entry::Vacant(v) => match File::open(cfg.cache_dir.join(name)) {
-                Ok(f) => v.insert(f),
-                Err(err) => {
-                    result = Err(err).with_context(|| format!("cannot open segment {name}"));
-                    break;
+            std::collections::hash_map::Entry::Vacant(v) => {
+                match File::open(cfg.cache_dir.join(name)) {
+                    Ok(f) => v.insert(f),
+                    Err(err) => {
+                        result = Err(err).with_context(|| format!("cannot open segment {name}"));
+                        break;
+                    }
                 }
-            },
+            }
         };
         let new_off = w.pos();
         if let Err(err) = copy_range(f, e.off, e.len, &mut w) {

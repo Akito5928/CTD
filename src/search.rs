@@ -62,9 +62,16 @@ pub fn find(
     limit: usize,
 ) -> Result<Found> {
     let folded: Vec<String> = terms.iter().map(|t| fold(t)).collect();
-    let finders: Vec<memmem::Finder<'static>> =
-        folded.iter().map(|t| memmem::Finder::new(t.as_bytes()).into_owned()).collect();
-    let carry = folded.iter().map(|t| t.len()).max().unwrap_or(1).saturating_sub(1);
+    let finders: Vec<memmem::Finder<'static>> = folded
+        .iter()
+        .map(|t| memmem::Finder::new(t.as_bytes()).into_owned())
+        .collect();
+    let carry = folded
+        .iter()
+        .map(|t| t.len())
+        .max()
+        .unwrap_or(1)
+        .saturating_sub(1);
     let mut files: HashMap<u32, File> = HashMap::new();
     let mut buf: Vec<u8> = Vec::new();
     let mut found = Found::default();
@@ -77,7 +84,10 @@ pub fn find(
             interrupt::check()?;
         }
         let path_folded = fold(&e.rel);
-        let mut hit: Vec<bool> = finders.iter().map(|f| f.find(path_folded.as_bytes()).is_some()).collect();
+        let mut hit: Vec<bool> = finders
+            .iter()
+            .map(|f| f.find(path_folded.as_bytes()).is_some())
+            .collect();
         if !hit.iter().all(|&b| b) && e.len > 0 {
             let f = match files.entry(e.seg) {
                 std::collections::hash_map::Entry::Occupied(o) => o.into_mut(),
@@ -94,7 +104,10 @@ pub fn find(
         if hit.iter().all(|&b| b) {
             found.total += 1;
             if found.hits.len() < limit {
-                found.hits.push(Hit { rel: e.rel.clone(), abs: root.join(&e.rel) });
+                found.hits.push(Hit {
+                    rel: e.rel.clone(),
+                    abs: root.join(&e.rel),
+                });
             }
         }
     }
@@ -118,7 +131,8 @@ fn scan_range(
         let want = left.min(READ_CHUNK as u64) as usize;
         let old = buf.len();
         buf.resize(old + want, 0);
-        f.read_exact(&mut buf[old..]).context("the index data is shorter than expected")?;
+        f.read_exact(&mut buf[old..])
+            .context("the index data is shorter than expected")?;
         left -= want as u64;
         for (i, fi) in finders.iter().enumerate() {
             if !hit[i] && fi.find(buf).is_some() {
@@ -151,11 +165,16 @@ pub struct Display {
 /// contains the most distinct terms (earliest on ties).
 pub fn describe(abs: &Path, terms: &[String]) -> Display {
     let folded: Vec<String> = terms.iter().map(|t| fold(t)).collect();
-    let finders: Vec<memmem::Finder<'static>> =
-        folded.iter().map(|t| memmem::Finder::new(t.as_bytes()).into_owned()).collect();
+    let finders: Vec<memmem::Finder<'static>> = folded
+        .iter()
+        .map(|t| memmem::Finder::new(t.as_bytes()).into_owned())
+        .collect();
     let qlens: Vec<usize> = folded.iter().map(|t| t.chars().count()).collect();
     let Ok(mut file) = File::open(abs) else {
-        return Display { unavailable: true, ..Default::default() };
+        return Display {
+            unavailable: true,
+            ..Default::default()
+        };
     };
     // (distinct terms, line number, original text, column, matched term length)
     let mut best: Option<(usize, usize, String, usize, usize)> = None;
@@ -181,11 +200,20 @@ pub fn describe(abs: &Path, terms: &[String]) -> Display {
         matching += 1;
         if best.as_ref().map_or(true, |b| count > b.0) {
             let col = String::from_utf8_lossy(&buf[..first_pos]).chars().count();
-            best = Some((count, line_no, String::from_utf8_lossy(bytes).into_owned(), col, first_len));
+            best = Some((
+                count,
+                line_no,
+                String::from_utf8_lossy(bytes).into_owned(),
+                col,
+                first_len,
+            ));
         }
     });
     if res.is_err() {
-        return Display { unavailable: true, ..Default::default() };
+        return Display {
+            unavailable: true,
+            ..Default::default()
+        };
     }
     match best {
         Some((_, line_no, text, col, qlen)) => Display {
@@ -300,7 +328,12 @@ mod tests {
 
     #[test]
     fn terms_are_split_on_unicode_whitespace() {
-        let t = parse_terms(&["programming language".into(), "Rust\u{3000}CLI".into(), "rust".into()]).unwrap();
+        let t = parse_terms(&[
+            "programming language".into(),
+            "Rust\u{3000}CLI".into(),
+            "rust".into(),
+        ])
+        .unwrap();
         assert_eq!(t, vec!["programming", "language", "Rust", "CLI", "rust"]);
         assert!(parse_terms(&["".into()]).is_err());
         assert!(parse_terms(&["  \u{3000} ".into()]).is_err());
@@ -320,10 +353,18 @@ mod tests {
     fn lines_split_like_the_index() {
         let mut got = Vec::new();
         let data = b"\xEF\xBB\xBFone\r\ntwo\rthree\nfour";
-        for_each_line(&mut &data[..], |n, b| got.push((n, String::from_utf8_lossy(b).to_string()))).unwrap();
+        for_each_line(&mut &data[..], |n, b| {
+            got.push((n, String::from_utf8_lossy(b).to_string()))
+        })
+        .unwrap();
         assert_eq!(
             got,
-            vec![(1, "one".into()), (2, "two".into()), (3, "three".into()), (4, "four".into())]
+            vec![
+                (1, "one".into()),
+                (2, "two".into()),
+                (3, "three".into()),
+                (4, "four".into())
+            ]
         );
     }
 
@@ -331,7 +372,11 @@ mod tests {
     fn describe_prefers_line_with_most_terms() {
         let d = tempfile::tempdir().unwrap();
         let p = d.path().join("a.txt");
-        std::fs::write(&p, "alpha only\nalpha and BETA here\nbeta later\nalpha beta again\n").unwrap();
+        std::fs::write(
+            &p,
+            "alpha only\nalpha and BETA here\nbeta later\nalpha beta again\n",
+        )
+        .unwrap();
         let r = describe(&p, &["alpha".into(), "beta".into()]);
         let (n, snip) = r.line.unwrap();
         assert_eq!(n, 2); // first line with both terms

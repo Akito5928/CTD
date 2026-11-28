@@ -1,11 +1,43 @@
 mod common;
 use common::tree_snapshot;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::thread;
+use std::time::Duration;
 use tempfile::TempDir;
 
 const EXE: &str = env!("CARGO_BIN_EXE_ctd");
+/// The release version; the release workflow names its files after it.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// `ETXTBSY` ("Text file busy"): the kernel refuses to execute a file that is
+/// still open for writing somewhere.
+fn is_text_file_busy(e: &io::Error) -> bool {
+    cfg!(unix) && e.raw_os_error() == Some(26)
+}
+
+/// Run a command, retrying while the kernel reports "Text file busy".
+///
+/// The tests copy the executable and start the copy right away, and they run
+/// in parallel. A child process that another test thread has just forked can
+/// still hold the write descriptor of the copy for a moment (until it calls
+/// `exec`), which makes our own `exec` fail with ETXTBSY. The condition is
+/// transient, so the start is simply repeated; nothing is ever overwritten.
+fn output_retry(cmd: &mut Command) -> Output {
+    let mut attempt = 0u64;
+    loop {
+        match cmd.output() {
+            Ok(o) => return o,
+            Err(e) if is_text_file_busy(&e) && attempt < 100 => {
+                attempt += 1;
+                thread::sleep(Duration::from_millis(10 * attempt.min(10)));
+            }
+            Err(e) => panic!("cannot run {cmd:?}: {e}"),
+        }
+    }
+}
 
 /// A search root that contains its own copy of the executable.
 struct Install {
@@ -31,14 +63,14 @@ impl Install {
     }
 
     fn run_in(&self, cwd: &Path, args: &[&str]) -> Output {
-        Command::new(&self.exe)
-            .args(args)
-            .current_dir(cwd)
-            .env("XDG_CACHE_HOME", self.cache.path())
-            .env("LOCALAPPDATA", self.cache.path())
-            .stdin(Stdio::null())
-            .output()
-            .unwrap()
+        output_retry(
+            Command::new(&self.exe)
+                .args(args)
+                .current_dir(cwd)
+                .env("XDG_CACHE_HOME", self.cache.path())
+                .env("LOCALAPPDATA", self.cache.path())
+                .stdin(Stdio::null()),
+        )
     }
 
     fn run(&self, args: &[&str]) -> Output {
@@ -59,7 +91,8 @@ fn version_and_help() {
     for args in [&["version"][..], &["--version"][..], &["-V"][..]] {
         let o = i.run(args);
         assert_eq!(o.status.code(), Some(0), "{args:?}");
-        assert_eq!(out(&o).trim(), "CTD v1.2.0");
+        assert_eq!(out(&o).trim(), format!("CTD v{VERSION}"));
+        assert_eq!(out(&o).trim(), "CTD v1.2.1");
     }
     for args in [&["help"][..], &["--help"][..]] {
         let o = i.run(args);
@@ -85,7 +118,10 @@ fn usage_errors_exit_2() {
 #[test]
 fn search_output_streams_and_exit_codes() {
     let i = Install::new();
-    i.write("notes/programming.txt", b"Learning a new programming language\nsecond");
+    i.write(
+        "notes/programming.txt",
+        b"Learning a new programming language\nsecond",
+    );
     i.write("other.txt", b"only programming");
     let o = i.run(&["programming", "language"]);
     assert_eq!(o.status.code(), Some(0));
@@ -94,8 +130,17 @@ fn search_output_streams_and_exit_codes() {
     assert!(so.contains("[1] notes/programming.txt"));
     assert!(so.contains("Line 1: Learning a new programming language"));
     assert!(!so.contains("other.txt"));
-    assert!(!so.contains("CTD v1.2.0") && !so.contains("Searching") && !so.contains("Root:"), "stdout = results only: {so}");
-    assert!(se.contains("Searching: \"programming language\"") && se.contains("Root: ") && se.contains("Found 1 file."));
+    assert!(
+        !so.contains(&format!("CTD v{VERSION}"))
+            && !so.contains("Searching")
+            && !so.contains("Root:"),
+        "stdout = results only: {so}"
+    );
+    assert!(
+        se.contains("Searching: \"programming language\"")
+            && se.contains("Root: ")
+            && se.contains("Found 1 file.")
+    );
 
     let o = i.run(&["zzz-nothing"]);
     assert_eq!(o.status.code(), Some(0), "no results is not an error");
@@ -166,11 +211,17 @@ fn status_does_not_touch_the_index() {
     let o = i.run(&["status"]);
     assert_eq!(o.status.code(), Some(0));
     assert!(out(&o).contains("Not created yet"));
-    assert!(fs::read_dir(i.cache.path()).unwrap().next().is_none(), "status must not create anything");
+    assert!(
+        fs::read_dir(i.cache.path()).unwrap().next().is_none(),
+        "status must not create anything"
+    );
     i.run(&["data"]);
     let o = i.run(&["status"]);
     let so = out(&o);
-    assert!(so.contains("Ready") && so.contains("Indexed text files:\n  1"), "{so}");
+    assert!(
+        so.contains("Ready") && so.contains("Indexed text files:\n  1"),
+        "{so}"
+    );
     assert!(so.contains(&i.cache.path().to_string_lossy().to_string()));
 }
 
@@ -182,7 +233,11 @@ fn rebuild_command() {
     let o = i.run(&["rebuild"]);
     assert_eq!(o.status.code(), Some(0));
     // the root also holds the executable itself (binary, skipped)
-    assert!(err(&o).contains("Index rebuilt: 2 files scanned, 1 indexed."), "{}", err(&o));
+    assert!(
+        err(&o).contains("Index rebuilt: 2 files scanned, 1 indexed."),
+        "{}",
+        err(&o)
+    );
     assert!(out(&o).is_empty());
     let o = i.run(&["alpha"]);
     assert!(out(&o).contains("a.txt"));
@@ -203,16 +258,22 @@ fn works_from_another_directory_and_after_moving_the_executable() {
     let new_exe = moved.path().join(i.exe.file_name().unwrap());
     fs::copy(&i.exe, &new_exe).unwrap();
     fs::write(moved.path().join("b.txt"), b"findme moved").unwrap();
-    let o = Command::new(&new_exe)
-        .arg("findme")
-        .env("XDG_CACHE_HOME", i.cache.path())
-        .env("LOCALAPPDATA", i.cache.path())
-        .stdin(Stdio::null())
-        .output()
-        .unwrap();
-    assert!(out(&o).contains("b.txt") && !out(&o).contains("a.txt"), "{}", out(&o));
+    let o = output_retry(
+        Command::new(&new_exe)
+            .arg("findme")
+            .env("XDG_CACHE_HOME", i.cache.path())
+            .env("LOCALAPPDATA", i.cache.path())
+            .stdin(Stdio::null()),
+    );
+    assert!(
+        out(&o).contains("b.txt") && !out(&o).contains("a.txt"),
+        "{}",
+        out(&o)
+    );
     // two roots -> two cache directories
-    let n = fs::read_dir(i.cache.path().join("ctd").join("v1")).unwrap().count();
+    let n = fs::read_dir(i.cache.path().join("ctd").join("v1"))
+        .unwrap()
+        .count();
     assert_eq!(n, 2);
 }
 
@@ -228,7 +289,10 @@ fn nothing_is_created_in_the_search_root_and_originals_are_untouched() {
     i.run(&["rebuild"]);
     i.run(&["status"]);
     assert_eq!(before, tree_snapshot(i.root.path()));
-    assert!(i.cache.path().join("ctd").join("v1").is_dir(), "index lives in the user cache");
+    assert!(
+        i.cache.path().join("ctd").join("v1").is_dir(),
+        "index lives in the user cache"
+    );
 }
 
 #[test]
@@ -279,9 +343,26 @@ fn no_network_or_database_dependencies() {
         .map(|l| l.trim_end_matches('"'))
         .collect();
     for banned in [
-        "rusqlite", "libsqlite3-sys", "sqlite", "reqwest", "hyper", "ureq", "curl", "tokio", "socket2",
-        "native-tls", "rustls", "openssl", "h2", "isahc", "attohttpc", "mio",
+        "rusqlite",
+        "libsqlite3-sys",
+        "sqlite",
+        "reqwest",
+        "hyper",
+        "ureq",
+        "curl",
+        "tokio",
+        "socket2",
+        "native-tls",
+        "rustls",
+        "openssl",
+        "h2",
+        "isahc",
+        "attohttpc",
+        "mio",
     ] {
-        assert!(!names.contains(&banned), "dependency {banned} must not be used");
+        assert!(
+            !names.contains(&banned),
+            "dependency {banned} must not be used"
+        );
     }
 }

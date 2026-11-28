@@ -37,7 +37,10 @@ struct Cli {
 
 pub fn main_entry() -> i32 {
     output::init_console();
-    let raw: Vec<String> = std::env::args_os().skip(1).map(|a| a.to_string_lossy().into_owned()).collect();
+    let raw: Vec<String> = std::env::args_os()
+        .skip(1)
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
 
     if raw.is_empty() {
         eprintln!("{}", Cli::command().render_help());
@@ -145,13 +148,24 @@ pub fn do_search<W: Write>(
     eprintln!("CTD v{VERSION}\n");
     eprintln!("Searching: \"{}\"", terms.join(" "));
     eprintln!("Root: {}", output::display_root(&cfg.root));
-    let max_depth = if unlimited { None } else { Some(DEFAULT_MAX_DEPTH) };
+    let max_depth = if unlimited {
+        None
+    } else {
+        Some(DEFAULT_MAX_DEPTH)
+    };
     if unlimited {
         eprintln!("Searching with unlimited directory depth...");
     }
     eprintln!();
 
-    let (idx, stats) = update::update(cfg, ex, &UpdateOptions { max_depth, rebuild: false })?;
+    let (idx, stats) = update::update(
+        cfg,
+        ex,
+        &UpdateOptions {
+            max_depth,
+            rebuild: false,
+        },
+    )?;
     report_update(&stats);
 
     let found = search::find(&cfg.root, &cfg.cache_dir, &idx, terms, max_depth, MAX_FILES)?;
@@ -181,9 +195,19 @@ pub fn do_rebuild(cfg: &Config, ex: &Excludes) -> Result<()> {
     let (idx, stats) = update::update(
         cfg,
         ex,
-        &UpdateOptions { max_depth: Some(DEFAULT_MAX_DEPTH), rebuild: true },
+        &UpdateOptions {
+            max_depth: Some(DEFAULT_MAX_DEPTH),
+            rebuild: true,
+        },
     )?;
-    let text = idx.entries.iter().filter(|e| e.state == State::Text).count();
-    eprintln!("Index rebuilt: {} files scanned, {text} indexed.", stats.scanned);
+    let text = idx
+        .entries
+        .iter()
+        .filter(|e| e.state == State::Text)
+        .count();
+    eprintln!(
+        "Index rebuilt: {} files scanned, {text} indexed.",
+        stats.scanned
+    );
     Ok(())
 }

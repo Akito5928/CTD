@@ -73,7 +73,8 @@ pub fn walk(root: &Path, max_depth: Option<u16>, ex: &Excludes) -> Result<WalkRe
                 if rel_dir.is_empty() {
                     return Err(e).with_context(|| format!("cannot read {}", dir.display()));
                 }
-                res.warnings.push(format!("cannot read directory {rel_dir}: {e}"));
+                res.warnings
+                    .push(format!("cannot read directory {rel_dir}: {e}"));
                 res.failed_dirs.push(rel_dir);
                 continue;
             }
@@ -84,7 +85,11 @@ pub fn walk(root: &Path, max_depth: Option<u16>, ex: &Excludes) -> Result<WalkRe
                 Err(e) => {
                     res.warnings.push(format!(
                         "error while listing {}: {e}",
-                        if rel_dir.is_empty() { "the search root" } else { &rel_dir }
+                        if rel_dir.is_empty() {
+                            "the search root"
+                        } else {
+                            &rel_dir
+                        }
                     ));
                     res.failed_dirs.push(rel_dir.clone());
                     continue;

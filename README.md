@@ -8,7 +8,7 @@ CTD searches every text file in the folder that contains the executable (and its
 
 ## Quick start
 
-1. Download the executable for your OS from the [Releases](../../releases) page (`ctd-v1.2.0-windows-x86_64.exe` or `ctd-v1.2.0-linux-x86_64`).
+1. Download the executable for your OS from the [Releases](../../releases) page (`ctd-v1.2.1-windows-x86_64.exe` or `ctd-v1.2.1-linux-x86_64`).
 2. Put it into the folder whose text you want to search (rename it to `ctd` / `ctd.exe` if you like).
 3. Open a terminal in any folder and run it by its path, or put that folder on your `PATH`:
 
@@ -81,8 +81,8 @@ cargo build --release          # target/release/ctd (ctd.exe on Windows)
 cargo run --release --example bench -- --sizes 1000,10000,100000
 ```
 
-- Linux: `scripts/build-linux.sh [build|test|bench]` → `dist/ctd-v1.2.0-linux-x86_64`
-- CI: `.github/workflows/build.yml` builds and tests Windows and Linux on every push; pushing a tag such as `v1.2` publishes a GitHub Release with both executables and SHA-256 checksums.
+- Linux: `scripts/build-linux.sh [build|test|bench]` → `dist/ctd-v1.2.1-linux-x86_64`
+- CI: `.github/workflows/build.yml` builds and tests Windows and Linux on every push; pushing a tag such as `v1.2.1` publishes a GitHub Release with both executables and SHA-256 checksums.
 
 Benchmark results measured on real hardware are in `bench/`.
 

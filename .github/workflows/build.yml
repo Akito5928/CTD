@@ -24,12 +24,12 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item target/release/ctd.exe dist/ctd-v1.2.0-windows-x86_64.exe
-          ./dist/ctd-v1.2.0-windows-x86_64.exe version
+          Copy-Item target/release/ctd.exe dist/ctd-v1.2.1-windows-x86_64.exe
+          ./dist/ctd-v1.2.1-windows-x86_64.exe version
       - uses: actions/upload-artifact@v4
         with:
-          name: ctd-v1.2.0-windows-x86_64
-          path: dist/ctd-v1.2.0-windows-x86_64.exe
+          name: ctd-v1.2.1-windows-x86_64
+          path: dist/ctd-v1.2.1-windows-x86_64.exe
       - name: Benchmark (manual runs only)
         if: github.event_name == 'workflow_dispatch'
         shell: pwsh
@@ -50,12 +50,12 @@ jobs:
         run: |
           cargo build --release --locked
           mkdir -p dist
-          cp target/release/ctd dist/ctd-v1.2.0-linux-x86_64
-          ./dist/ctd-v1.2.0-linux-x86_64 version
+          cp target/release/ctd dist/ctd-v1.2.1-linux-x86_64
+          ./dist/ctd-v1.2.1-linux-x86_64 version
       - uses: actions/upload-artifact@v4
         with:
-          name: ctd-v1.2.0-linux-x86_64
-          path: dist/ctd-v1.2.0-linux-x86_64
+          name: ctd-v1.2.1-linux-x86_64
+          path: dist/ctd-v1.2.1-linux-x86_64
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

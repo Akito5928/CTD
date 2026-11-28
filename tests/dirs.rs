@@ -29,7 +29,10 @@ fn subdirectories_are_searched() {
 fn depth_limit_is_eight_and_s_removes_it() {
     let e = Env::new();
     for d in [0usize, 1, 7, 8, 9, 12] {
-        e.write(&deep_path(d, "f.txt"), format!("needle at depth {d}").as_bytes());
+        e.write(
+            &deep_path(d, "f.txt"),
+            format!("needle at depth {d}").as_bytes(),
+        );
     }
     let normal = e.search(&["needle"]);
     assert_eq!(normal.len(), 4, "{normal:?}"); // depths 0, 1, 7, 8
@@ -66,7 +69,10 @@ fn deep_file_deleted_is_not_noticed_by_a_normal_scan() {
     assert_eq!(e.search_all(&["needle"]).len(), 1);
     fs::remove_file(e.path(&deep_path(9, "deep.txt"))).unwrap();
     let st = e.update(Some(8));
-    assert_eq!(st.removed, 0, "outside the scanned depth: unknown, not deleted");
+    assert_eq!(
+        st.removed, 0,
+        "outside the scanned depth: unknown, not deleted"
+    );
     let st = e.update(None);
     assert_eq!(st.removed, 1);
 }
@@ -75,7 +81,10 @@ fn deep_file_deleted_is_not_noticed_by_a_normal_scan() {
 fn many_files() {
     let e = Env::new();
     for i in 0..3000 {
-        e.write(&format!("d{}/f{i}.txt", i % 50), format!("content {i} common").as_bytes());
+        e.write(
+            &format!("d{}/f{i}.txt", i % 50),
+            format!("content {i} common").as_bytes(),
+        );
     }
     assert_eq!(e.search(&["common"]).len(), 3000);
     assert_eq!(e.search(&["content 2999"]).len(), 1);
@@ -104,7 +113,11 @@ fn dangerous_roots_are_refused() {
     assert!(ex.check_root(std::path::Path::new("/")).is_err());
     let e = Env::new();
     assert!(ex.check_root(&e.cfg.root).is_ok());
-    let inside = Excludes::new(&[e.cfg.root.to_string_lossy().to_string()], &[], cfg!(windows));
+    let inside = Excludes::new(
+        &[e.cfg.root.to_string_lossy().to_string()],
+        &[],
+        cfg!(windows),
+    );
     assert!(inside.check_root(&e.cfg.root.join("sub")).is_err());
 }
 
@@ -136,7 +149,10 @@ fn inaccessible_directory_is_skipped_and_its_files_are_not_deleted() {
     let after = e.search(&["needle"]);
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
     if !readable {
-        assert_eq!(st.removed, 0, "unverified files must not be treated as deleted");
+        assert_eq!(
+            st.removed, 0,
+            "unverified files must not be treated as deleted"
+        );
         assert_eq!(after.len(), 2);
     }
 }
@@ -158,7 +174,13 @@ fn walk_reports_uncertain_paths() {
 fn unicode_names() {
     let e = Env::new();
     e.write("日本語フォルダ/メモ ファイル.txt", "テスト".as_bytes());
-    assert_eq!(e.search(&["テスト"]), s(&["日本語フォルダ/メモ ファイル.txt"]));
-    assert_eq!(e.search(&["メモ"]), s(&["日本語フォルダ/メモ ファイル.txt"]));
+    assert_eq!(
+        e.search(&["テスト"]),
+        s(&["日本語フォルダ/メモ ファイル.txt"])
+    );
+    assert_eq!(
+        e.search(&["メモ"]),
+        s(&["日本語フォルダ/メモ ファイル.txt"])
+    );
     assert!(e.search(&["日本語フォルダ"]).len() == 1);
 }

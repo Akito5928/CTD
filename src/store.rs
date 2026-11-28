@@ -133,19 +133,30 @@ impl<'a> R<'a> {
 }
 
 pub fn unix_now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 /// A unique suffix for work files (several ctd processes may run at once).
 pub fn unique_id() -> String {
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    let h = blake3::hash(format!("{}-{}", std::process::id(), nanos).as_bytes()).to_hex().to_string();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let h = blake3::hash(format!("{}-{}", std::process::id(), nanos).as_bytes())
+        .to_hex()
+        .to_string();
     h[..16].to_string()
 }
 
 impl Index {
     pub fn new(root: &str) -> Index {
-        Index { root: root.to_string(), ..Default::default() }
+        Index {
+            root: root.to_string(),
+            ..Default::default()
+        }
     }
 
     pub fn serialize(&self) -> Vec<u8> {
@@ -197,7 +208,10 @@ impl Index {
         let nseg = r.u32()? as usize;
         let mut segments = Vec::with_capacity(nseg.min(1 << 16));
         for _ in 0..nseg {
-            segments.push(Segment { name: r.str()?, len: r.u64()? });
+            segments.push(Segment {
+                name: r.str()?,
+                len: r.u64()?,
+            });
         }
         let n = r.u64()? as usize;
         let mut entries = Vec::with_capacity(n.min(1 << 24));
@@ -212,17 +226,34 @@ impl Index {
             let off = r.u64()?;
             let len = r.u64()?;
             if state == State::Text {
-                let s = segments.get(seg as usize).ok_or("entry refers to a missing segment")?;
+                let s = segments
+                    .get(seg as usize)
+                    .ok_or("entry refers to a missing segment")?;
                 if off.checked_add(len).map_or(true, |end| end > s.len) {
                     return Err("entry exceeds its segment".to_string());
                 }
             }
-            entries.push(Entry { rel, depth, size, mtime_ns, hash, state, seg, off, len });
+            entries.push(Entry {
+                rel,
+                depth,
+                size,
+                mtime_ns,
+                hash,
+                state,
+                seg,
+                off,
+                len,
+            });
         }
         if r.p != body.len() {
             return Err("trailing data in index".to_string());
         }
-        Ok(Index { root, updated_unix, segments, entries })
+        Ok(Index {
+            root,
+            updated_unix,
+            segments,
+            entries,
+        })
     }
 
     /// Load and validate the committed index of `cache_dir`.
@@ -240,7 +271,9 @@ impl Index {
         for s in &idx.segments {
             match fs::metadata(cache_dir.join(&s.name)) {
                 Ok(m) if m.len() == s.len => {}
-                Ok(_) => return LoadResult::Corrupt(format!("segment {} has the wrong size", s.name)),
+                Ok(_) => {
+                    return LoadResult::Corrupt(format!("segment {} has the wrong size", s.name))
+                }
                 Err(_) => return LoadResult::Corrupt(format!("segment {} is missing", s.name)),
             }
         }
@@ -249,8 +282,9 @@ impl Index {
 
     /// Commit: write a temporary file, flush it, then rename it over `index.bin`.
     pub fn save_atomic(&self, cache_dir: &Path) -> Result<()> {
-        fs::create_dir_all(cache_dir)
-            .with_context(|| format!("cannot create the cache directory {}", cache_dir.display()))?;
+        fs::create_dir_all(cache_dir).with_context(|| {
+            format!("cannot create the cache directory {}", cache_dir.display())
+        })?;
         let tmp = cache_dir.join(format!("{INDEX_FILE}.tmp-{}", unique_id()));
         let result = (|| -> Result<()> {
             let mut f = File::create(&tmp)?;
@@ -280,13 +314,24 @@ pub struct SegmentWriter {
 
 impl SegmentWriter {
     pub fn create(cache_dir: &Path) -> Result<SegmentWriter> {
-        fs::create_dir_all(cache_dir)
-            .with_context(|| format!("cannot create the cache directory {}", cache_dir.display()))?;
+        fs::create_dir_all(cache_dir).with_context(|| {
+            format!("cannot create the cache directory {}", cache_dir.display())
+        })?;
         let id = unique_id();
         let name = format!("seg-{id}.dat");
         let tmp_path = cache_dir.join(format!("seg-{id}.tmp"));
-        let file = OpenOptions::new().create_new(true).write(true).open(&tmp_path)?;
-        Ok(SegmentWriter { name, final_path: cache_dir.join(format!("seg-{id}.dat")), tmp_path, file, buf: Vec::new(), pos: 0 })
+        let file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&tmp_path)?;
+        Ok(SegmentWriter {
+            name,
+            final_path: cache_dir.join(format!("seg-{id}.dat")),
+            tmp_path,
+            file,
+            buf: Vec::new(),
+            pos: 0,
+        })
     }
 
     pub fn pos(&self) -> u64 {
@@ -330,7 +375,10 @@ impl SegmentWriter {
         self.file.sync_all()?;
         drop(self.file);
         fs::rename(&self.tmp_path, &self.final_path)?;
-        Ok(Some(Segment { name: self.name, len: self.pos }))
+        Ok(Some(Segment {
+            name: self.name,
+            len: self.pos,
+        }))
     }
 
     /// Throw the segment away.
@@ -346,7 +394,9 @@ pub fn cleanup(cache_dir: &Path, idx: &Index, dropped: &[String]) {
         let _ = fs::remove_file(cache_dir.join(name));
     }
     let live: HashSet<&str> = idx.segments.iter().map(|s| s.name.as_str()).collect();
-    let Ok(rd) = fs::read_dir(cache_dir) else { return };
+    let Ok(rd) = fs::read_dir(cache_dir) else {
+        return;
+    };
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
         let is_work = name.contains(".tmp");
@@ -374,10 +424,33 @@ mod tests {
         Index {
             root: "/r".into(),
             updated_unix: 5,
-            segments: vec![Segment { name: "seg-a.dat".into(), len: 10 }],
+            segments: vec![Segment {
+                name: "seg-a.dat".into(),
+                len: 10,
+            }],
             entries: vec![
-                Entry { rel: "a.txt".into(), depth: 0, size: 3, mtime_ns: -7, hash: [1; 32], state: State::Text, seg: 0, off: 0, len: 10 },
-                Entry { rel: "日本/b.bin".into(), depth: 1, size: 9, mtime_ns: 2, hash: [0; 32], state: State::Binary, seg: 0, off: 0, len: 0 },
+                Entry {
+                    rel: "a.txt".into(),
+                    depth: 0,
+                    size: 3,
+                    mtime_ns: -7,
+                    hash: [1; 32],
+                    state: State::Text,
+                    seg: 0,
+                    off: 0,
+                    len: 10,
+                },
+                Entry {
+                    rel: "日本/b.bin".into(),
+                    depth: 1,
+                    size: 9,
+                    mtime_ns: 2,
+                    hash: [0; 32],
+                    state: State::Binary,
+                    seg: 0,
+                    off: 0,
+                    len: 0,
+                },
             ],
         }
     }

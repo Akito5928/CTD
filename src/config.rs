@@ -71,7 +71,9 @@ pub fn cache_base_from(
         }
         match home {
             Some(h) if !h.is_empty() => Ok(PathBuf::from(h).join(".cache")),
-            _ => bail!("neither $XDG_CACHE_HOME nor $HOME is set; cannot locate the cache directory"),
+            _ => {
+                bail!("neither $XDG_CACHE_HOME nor $HOME is set; cannot locate the cache directory")
+            }
         }
     }
 }
@@ -128,7 +130,12 @@ impl Excludes {
     pub fn system() -> Excludes {
         if cfg!(windows) {
             let mut paths = Vec::new();
-            for var in ["SystemRoot", "ProgramFiles", "ProgramFiles(x86)", "ProgramData"] {
+            for var in [
+                "SystemRoot",
+                "ProgramFiles",
+                "ProgramFiles(x86)",
+                "ProgramData",
+            ] {
                 if let Ok(v) = std::env::var(var) {
                     paths.push(v);
                 }
@@ -175,7 +182,10 @@ impl Excludes {
         }
         if let Some(name) = root.file_name().and_then(|n| n.to_str()) {
             if self.is_excluded_name(name) {
-                bail!("the search root {} is inside a system area that CTD never searches.", root.display());
+                bail!(
+                    "the search root {} is inside a system area that CTD never searches.",
+                    root.display()
+                );
             }
         }
         Ok(())
@@ -188,7 +198,11 @@ mod tests {
 
     #[test]
     fn linux_exclusions() {
-        let ex = Excludes::new(&["/proc".into(), "/sys".into(), "/dev".into(), "/run".into()], &[], false);
+        let ex = Excludes::new(
+            &["/proc".into(), "/sys".into(), "/dev".into(), "/run".into()],
+            &[],
+            false,
+        );
         assert!(ex.is_excluded_path(Path::new("/proc")));
         assert!(ex.is_excluded_path(Path::new("/proc/1/status")));
         assert!(ex.is_excluded_path(Path::new("/run/user/1000")));
@@ -202,7 +216,12 @@ mod tests {
     #[test]
     fn windows_style_exclusions_are_case_insensitive() {
         let ex = Excludes::new(
-            &[r"C:\Windows".into(), r"C:\Program Files".into(), r"C:\Program Files (x86)".into(), r"C:\ProgramData".into()],
+            &[
+                r"C:\Windows".into(),
+                r"C:\Program Files".into(),
+                r"C:\Program Files (x86)".into(),
+                r"C:\ProgramData".into(),
+            ],
             &["$Recycle.Bin", "System Volume Information"],
             true,
         );
@@ -226,21 +245,74 @@ mod tests {
         }
     }
 
+    /// An absolute path in the syntax of the host OS (`/x` on Unix, `C:\x` on Windows).
+    /// `cache_base_from` is platform independent when `windows` is passed
+    /// explicitly, but "absolute" is decided by the host's path rules.
+    fn host_abs(p: &str) -> String {
+        if cfg!(windows) {
+            format!("C:{}", p.replace('/', "\\"))
+        } else {
+            p.to_string()
+        }
+    }
+
     #[test]
-    fn cache_locations() {
-        let w = cache_base_from(Some(r"C:\Users\u\AppData\Local".into()), None, None, true).unwrap();
+    fn windows_cache_base_uses_localappdata() {
+        let w =
+            cache_base_from(Some(r"C:\Users\u\AppData\Local".into()), None, None, true).unwrap();
         assert_eq!(w, PathBuf::from(r"C:\Users\u\AppData\Local"));
+        // XDG_CACHE_HOME and HOME play no role on Windows
+        let w = cache_base_from(
+            Some(r"C:\L".into()),
+            Some(host_abs("/xdg").into()),
+            Some(host_abs("/home/u").into()),
+            true,
+        )
+        .unwrap();
+        assert_eq!(w, PathBuf::from(r"C:\L"));
         assert!(cache_base_from(None, None, None, true).is_err());
-        let x = cache_base_from(None, Some("/xdg".into()), Some("/home/u".into()), false).unwrap();
-        assert_eq!(x, PathBuf::from("/xdg"));
-        let h = cache_base_from(None, None, Some("/home/u".into()), false).unwrap();
-        assert_eq!(h, PathBuf::from("/home/u/.cache"));
-        let rel = cache_base_from(None, Some("relative".into()), Some("/home/u".into()), false).unwrap();
-        assert_eq!(rel, PathBuf::from("/home/u/.cache"));
-        let d = cache_dir_for(Path::new("/x"), Path::new("/a/b"));
-        assert!(d.starts_with("/x/ctd/v1"));
+        assert!(cache_base_from(Some("".into()), None, None, true).is_err());
+    }
+
+    #[test]
+    fn linux_cache_base_prefers_xdg_cache_home() {
+        let xdg = host_abs("/xdg");
+        let home = host_abs("/home/u");
+        let x = cache_base_from(
+            None,
+            Some(xdg.clone().into()),
+            Some(home.clone().into()),
+            false,
+        )
+        .unwrap();
+        assert_eq!(x, PathBuf::from(&xdg));
+        // without XDG_CACHE_HOME: ~/.cache
+        let h = cache_base_from(None, None, Some(home.clone().into()), false).unwrap();
+        assert_eq!(h, PathBuf::from(&home).join(".cache"));
+        // a relative XDG_CACHE_HOME is ignored (XDG specification)
+        let rel = cache_base_from(
+            None,
+            Some("relative".into()),
+            Some(home.clone().into()),
+            false,
+        )
+        .unwrap();
+        assert_eq!(rel, PathBuf::from(&home).join(".cache"));
+        // LOCALAPPDATA plays no role on Linux
+        let l =
+            cache_base_from(Some(r"C:\L".into()), None, Some(home.clone().into()), false).unwrap();
+        assert_eq!(l, PathBuf::from(&home).join(".cache"));
+        assert!(cache_base_from(None, None, None, false).is_err());
+    }
+
+    #[test]
+    fn cache_directory_is_derived_from_the_root_path() {
+        let base = PathBuf::from(host_abs("/x"));
+        let a = host_abs("/a/b");
+        let d = cache_dir_for(&base, Path::new(&a));
+        assert!(d.starts_with(base.join("ctd").join("v1")));
         assert_eq!(d.file_name().unwrap().len(), 16);
-        assert_ne!(d, cache_dir_for(Path::new("/x"), Path::new("/a/c")));
-        assert_eq!(d, cache_dir_for(Path::new("/x"), Path::new("/a/b/")));
+        assert_ne!(d, cache_dir_for(&base, Path::new(&host_abs("/a/c"))));
+        assert_eq!(d, cache_dir_for(&base, Path::new(&format!("{a}/"))));
     }
 }

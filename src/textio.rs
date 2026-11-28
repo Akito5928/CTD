@@ -108,7 +108,10 @@ mod tests {
     #[test]
     fn utf8_bom_and_folding() {
         assert_eq!(norm(&["Héllo ÄÖ".as_bytes()]).unwrap(), "héllo äö");
-        assert_eq!(norm(&[b"\xEF\xBB\xBF", "日本語ABC".as_bytes()]).unwrap(), "日本語abc");
+        assert_eq!(
+            norm(&[b"\xEF\xBB\xBF", "日本語ABC".as_bytes()]).unwrap(),
+            "日本語abc"
+        );
         assert_eq!(norm(&["ＡＢＣ".as_bytes()]).unwrap(), "ａｂｃ");
     }
 

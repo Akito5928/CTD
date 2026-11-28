@@ -25,12 +25,22 @@ pub fn format_utc(unix: u64) -> String {
     let days = (unix / 86_400) as i64;
     let rem = unix % 86_400;
     let (y, m, d) = civil_from_days(days);
-    format!("{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02} UTC", rem / 3600, rem % 3600 / 60, rem % 60)
+    format!(
+        "{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02} UTC",
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60
+    )
 }
 
 fn cache_size(cfg: &Config) -> u64 {
     std::fs::read_dir(&cfg.cache_dir)
-        .map(|rd| rd.flatten().filter_map(|e| e.metadata().ok()).map(|m| m.len()).sum())
+        .map(|rd| {
+            rd.flatten()
+                .filter_map(|e| e.metadata().ok())
+                .map(|m| m.len())
+                .sum()
+        })
         .unwrap_or(0)
 }
 
@@ -40,7 +50,10 @@ pub fn run<W: Write>(cfg: &Config, out: &mut W) -> Result<()> {
     writeln!(out, "Cache directory:\n  {}\n", cfg.cache_dir.display())?;
     match Index::load(&cfg.cache_dir) {
         LoadResult::Missing => {
-            writeln!(out, "Index status:\n  Not created yet (it is built on the first search)")?;
+            writeln!(
+                out,
+                "Index status:\n  Not created yet (it is built on the first search)"
+            )?;
         }
         LoadResult::Corrupt(reason) => {
             writeln!(
@@ -49,7 +62,11 @@ pub fn run<W: Write>(cfg: &Config, out: &mut W) -> Result<()> {
             )?;
         }
         LoadResult::Ready(idx) => {
-            let text = idx.entries.iter().filter(|e| e.state == State::Text).count();
+            let text = idx
+                .entries
+                .iter()
+                .filter(|e| e.state == State::Text)
+                .count();
             let count = |s: State| idx.entries.iter().filter(|e| e.state == s).count();
             let deep = idx
                 .entries
@@ -72,7 +89,12 @@ pub fn run<W: Write>(cfg: &Config, out: &mut W) -> Result<()> {
                 )?;
             }
             writeln!(out, "Last updated:\n  {}\n", format_utc(idx.updated_unix))?;
-            writeln!(out, "Index size:\n  {} KB ({INDEX_FILE} + {} data file(s))", cache_size(cfg) / 1024, idx.segments.len())?;
+            writeln!(
+                out,
+                "Index size:\n  {} KB ({INDEX_FILE} + {} data file(s))",
+                cache_size(cfg) / 1024,
+                idx.segments.len()
+            )?;
         }
     }
     Ok(())
