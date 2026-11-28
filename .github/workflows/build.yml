@@ -2,7 +2,7 @@ name: build
 
 on:
   push:
-    branches: [main, v1.2-dev]
+    branches: [main, v1.2-rust]
     tags: ["v*"]
   workflow_dispatch:
 
